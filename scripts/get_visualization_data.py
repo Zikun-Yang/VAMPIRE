@@ -27,7 +27,7 @@ def parse_repeatmasker_output(file_path):
     df = pd.read_csv(file_path, sep = r'\s+', skiprows = 3, header = None, names = ['score', 'perc_div', 'perc_del', 'perc_ins', 
                                                                        'query', 'query_position_start', 'query_position_end', 'matching_repeat_left', 
                                                                        'strand', 'repeat_class', 'repeat_family_and_name',
-                                                                        'repeat_position_start', 'repeat_position_end', 'repeat_left', 'repeat_id'])
+                                                                        'repeat_position_start', 'repeat_position_end', 'repeat_left', 'repeat_id','other'])
     df[['repeat_family', 'repeat_name']] = df['repeat_family_and_name'].str.split('/', expand=True)
     df.loc[df['strand'] == 'C', 'strand'] = '-'
     return df

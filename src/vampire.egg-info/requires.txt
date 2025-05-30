@@ -1,0 +1,16 @@
+numpy
+pandas
+edlib
+tqdm
+matplotlib
+seaborn
+scipy
+resource
+pybktree
+Levenshtein
+Bio
+rich
+sourmash
+networkx
+scikit-learn
+logomaker

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vampire"
+version = "0.3.0"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["tandem repeat", "kmer", "de bruijn graph"]
+description = "An integrated tool for annotating the motif variation and complex patterns in tandem repeats."
+authors = [
+    {name = "Zikun Yang", email = "ericyangzk@gmail.com"},
+    {name = "Shilong Zhang", email = "shilong.zhang.cn@gmail.com"},
+    {name = "Yafei Mao", email = "yafmao@gmail.com"}
+]
+maintainers = [
+  {name = "Zikun Yang", email = "ericyangzk@gmail.com"}
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "edlib",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "scipy",
+    "resource",
+    "pybktree",
+    "Levenshtein",
+    "Bio",
+    "rich",
+    "sourmash",
+    "networkx",
+    "scikit-learn",
+    "logomaker"
+
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"
+
+[project.scripts]
+vampire = "vampire.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"vampire.resources" = ["refMotif.fa"]
+

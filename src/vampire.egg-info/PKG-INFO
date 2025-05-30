@@ -1,0 +1,43 @@
+Metadata-Version: 2.4
+Name: vampire
+Version: 0.3.0
+Summary: An integrated tool for annotating the motif variation and complex patterns in tandem repeats.
+Author-email: Zikun Yang <ericyangzk@gmail.com>, Shilong Zhang <shilong.zhang.cn@gmail.com>, Yafei Mao <yafmao@gmail.com>
+Maintainer-email: Zikun Yang <ericyangzk@gmail.com>
+License-Expression: MIT
+Project-URL: Homepage, https://zikun-yang.github.io/VAMPIRE_Cookbook/
+Keywords: tandem repeat,kmer,de bruijn graph
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: edlib
+Requires-Dist: tqdm
+Requires-Dist: matplotlib
+Requires-Dist: seaborn
+Requires-Dist: scipy
+Requires-Dist: resource
+Requires-Dist: pybktree
+Requires-Dist: Levenshtein
+Requires-Dist: Bio
+Requires-Dist: rich
+Requires-Dist: sourmash
+Requires-Dist: networkx
+Requires-Dist: scikit-learn
+Requires-Dist: logomaker
+Dynamic: license-file
+
+# VAMPIRE - A tool for annotating the motif variation and complex patterns in tandem repeats.
+
+https://zikun-yang.github.io/VAMPIRE_Cookbook/
+
+## Introduction
+
+## Installation
+
+## Usage
+
+## Citation
+
+## Contact

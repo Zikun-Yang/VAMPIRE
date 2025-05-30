@@ -116,12 +116,34 @@ make_hist <- function(sdf) {
   count <- nrow(sdf)
   extra <- ""
   my_scale <- comma
+
+  bins <- min(1000, max(30, floor(count / 500))) # 30 - 1000
+
   if (count > 1e5) {
     extra <- "\n(thousands)"
     my_scale <- make_k
   }
+
+  scale_factor <- count * (100 - bot) / bins
+
+  # p <- ggplot(data = sdf, aes(perID_by_events, fill = discrete)) +
+  #   geom_histogram(aes(y = after_stat(density)), bins = bins, alpha = 0.6, position = "identity") +
+  #  geom_density(
+  #    data = sdf,
+  #    mapping = aes(x = perID_by_events, y = after_stat(density * scale_factor)),
+  #    color = "black", size = 1, alpha = 0.6
+  #  ) +
+  #  theme_cowplot() +
+  #  scale_fill_brewer(palette = "Spectral", direction = -1) +
+  #  theme(legend.position = "none") +
+  #  scale_y_continuous(labels = my_scale) +
+  #  scale_x_continuous(labels = scale_x_fun) +
+  #  coord_cartesian(xlim = c(bot, 100)) +
+  #  xlab("% identity") +
+  #  ylab(glue("# of alignments{extra}"))
+
   p <- ggplot(data = sdf, aes(perID_by_events, fill = discrete)) +
-    geom_histogram(bins = 300) +
+    geom_histogram(bins = bins) +
     theme_cowplot() +
     scale_fill_brewer(palette = "Spectral", direction = -1) +
     theme(legend.position = "none") +
@@ -130,6 +152,7 @@ make_hist <- function(sdf) {
     coord_cartesian(xlim = c(bot, 100)) +
     xlab("% identity") +
     ylab(glue("# of alignments{extra}"))
+
   p
 }
 

@@ -1,0 +1,38 @@
+{
+    "I/O Options": {
+        "input": "tests/001-anno_STR.fa",
+        "output": "tests/001-anno_STR"
+    },
+    "General Options": {
+        "config": null,
+        "thread": 1,
+        "AUTO": false,
+        "debug": false,
+        "window_length": 5000,
+        "overlap_length": 1000,
+        "resource": 50
+    },
+    "Decomposition Options": {
+        "ksize": 5,
+        "motif": "base",
+        "motifnum": 30,
+        "abud_threshold": 0.01,
+        "abud_min": 3,
+        "plot": false,
+        "no_denovo": false
+    },
+    "Annotation Options": {
+        "force": false,
+        "annotation_dist_ratio": 0.4,
+        "finding_dist_ratio": 0.2,
+        "match_score": 1,
+        "lendif_penalty": 0.01,
+        "gap_penalty": 1,
+        "distance_penalty": 1.5,
+        "perfect_bonus": 0.5
+    },
+    "Output Options": {
+        "quiet": true,
+        "score": 5
+    }
+}

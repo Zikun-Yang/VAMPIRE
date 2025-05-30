@@ -1,4 +1,3 @@
-import argparse
 import edlib
 import numpy as np
 import pandas as pd
@@ -86,7 +85,7 @@ def merge_calculate_distance(task):
         raise ValueError("unrecognized direction!")
     return (index, target_motif, motif, dir, min_distance)
 
-def merge(annotation, sources):
+def merge(annotation, sources, id2motif, args):
     # get index to revise
     index_list = []
     for source, dir in sources:
@@ -135,7 +134,7 @@ def merge(annotation, sources):
     return annotation
     
 def delete_calculate_distance(task):
-    index, target, alternative, dir = task
+    index, target, alternative, dir, max_distance = task
     ###print(index)
     min_distance = 1e6
     best_alternative = None
@@ -143,23 +142,23 @@ def delete_calculate_distance(task):
 
     if dir is None:
         distance = compute_edit_distance(target, alternative)
-        if distance < min_distance:
+        if distance < min_distance and distance < max_distance:
             min_distance = distance
             best_alternative = alternative
             dir = '+'
         distance = compute_edit_distance(target, rc(alternative))
-        if distance < min_distance:
+        if distance < min_distance and distance < max_distance:
             min_distance = distance
             best_alternative = alternative
             dir = '-'
     elif dir == '+':
         distance = compute_edit_distance(target, alternative)
-        if distance < min_distance:
+        if distance < min_distance and distance < max_distance:
             min_distance = distance
             best_alternative = alternative
     elif dir == '-':
         distance = compute_edit_distance(target, rc(alternative))
-        if distance < min_distance:
+        if distance < min_distance and distance < max_distance:
             min_distance = distance
             best_alternative = alternative
     else:
@@ -167,7 +166,7 @@ def delete_calculate_distance(task):
         
     return (index, target, best_alternative, dir, min_distance)
 
-def delete(annotation, sources):
+def delete(annotation, sources, id2motif, args):
     # get deletion target
     id_to_del = []
     for motif, dir in sources:
@@ -199,13 +198,10 @@ def delete(annotation, sources):
         if tmp not in id_to_del:
             motif_list.append([row['motif'], row['dir']])
 
-    ###for motif, dir in motif_list:
-    ###    print(f"{motif2id[motif]}{dir}")
-
     idx_min_dist_dict, idx_result_dict = {}, {}
     for alternative, dir in motif_list:
-        max_distance = len(target) * threshold
-        tasks = [(index_list[i], target_motifs[i], alternative, dir) for i in range(len(target_motifs))]
+        max_distance = len(alternative) * threshold
+        tasks = [(index_list[i], target_motifs[i], alternative, dir, max_distance) for i in range(len(target_motifs))]
         
         ###print(tasks)
 
@@ -267,7 +263,7 @@ def replace_calculate_distance(task):
 
     return (index, target_motif, new_motif, is_replace, new_dir)
 
-def replace(annotation, sources):
+def replace(annotation, sources, id2motif, args):
     old, new = sources
     old_motif, old_dir = old
     new_motif, new_dir = new
@@ -307,33 +303,22 @@ def replace(annotation, sources):
     return annotation
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("raw", type=str, help="output prefix of raw results of trkscan.py")
-    parser.add_argument("action", type=str, help="action file")
-    parser.add_argument("-o", "--out", type=str, default=None, help="output prefix of modified results")
-    parser.add_argument("-t", "--thread", type=int, default=8, help="number of thread")
-    args = parser.parse_args()
-
+# refine.py
+def run_refine(args, parser):
     if args.out is None:
-        args.out = f'{args.raw}.revised'
+        args.out = f'{args.prefix}.revised'
     
     # parse and check action file
     action_df = pd.read_table(args.action, sep = "\t", header = None, names = ["source", "action"])
     actions = parse_and_validate_actions(action_df)
 
-    ## print(actions)
-
-    annotation = pd.read_table(f"{args.raw}.annotation.tsv")
-    motif = pd.read_table(f"{args.raw}.motif.tsv")
-    config = pd.read_json(f"{args.raw}.setting.json")
+    annotation = pd.read_table(f"{args.prefix}.annotation.tsv")
+    motif = pd.read_table(f"{args.prefix}.motif.tsv")
+    config = pd.read_json(f"{args.prefix}.setting.json")
 
     global motif2id
     motif2id = {row['motif']: str(row['id']) for _, row in motif.iterrows()}
     id2motif = {str(row['id']): row['motif'] for _, row in motif.iterrows()}
-
-    #print(motif2id)
-    #print(id2motif)
 
     global threshold
     threshold = config["Annotation Options"]["annotation_dist_ratio"]
@@ -343,13 +328,13 @@ if __name__ == "__main__":
         target, type = action
         if type == "MERGE":
             print(f"merging: {target}")
-            annotation = merge(annotation, target)
+            annotation = merge(annotation, target, id2motif, args)
         elif type == "DELETE":
             print(f"deleting: {target}")
-            annotation = delete(annotation, target)
+            annotation = delete(annotation, target, id2motif, args)
         elif type == "REPLACE":
             print(f"replacing: {target}")
-            annotation = replace(annotation, target)
+            annotation = replace(annotation, target, id2motif, args)
         else:
             raise ValueError("invalid action!")
 
@@ -385,8 +370,7 @@ if __name__ == "__main__":
     motifid_list = motif['id'].tolist()
     
     # get revised dist file
-    dist = pd.read_table(f"{args.raw}.dist.tsv")
+    dist = pd.read_table(f"{args.prefix}.dist.tsv")
     selected = [(dist.loc[idx, 'ref'] in motifid_list) and (dist.loc[idx, 'query'] in motifid_list) for idx in range(dist.shape[0])]
     dist = dist.loc[selected,]
     dist.to_csv(f"{args.out}.dist.tsv", sep = '\t', index = False, columns = ['ref','query','dist','is_rc'])
-
