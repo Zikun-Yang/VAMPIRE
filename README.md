@@ -3,7 +3,8 @@
 ## <a name="started"></a>Getting Started
 ```sh
 # Install VAMPIRE
-pip install vampire
+singularity pull docker://zikun-yang/vampire-tr:latest
+# You can also install by pip: pip install vampire-tr, but you need to install mafft for using logo
 
 # Annotate STRs with
 vampire anno tests/001-anno_STR.fa tests/001-anno_STR
