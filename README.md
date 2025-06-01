@@ -126,7 +126,7 @@ vampire mkref tests/003-mkref_data tests/003-mkref_reference.fa
 ```
 
 
-### <a name="evaluate"></a>Evaluate annotation quality
+### <a name="evaluate"></a>evaluate - Evaluate annotation quality
 VAMPIRE evaluates the quality of annotation in a edit distance matrix method. See [the VAMPIRE Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/) for more details.
 ```sh
 # Evaluate the quality of annotation
