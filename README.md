@@ -46,9 +46,6 @@ See [Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/) for more details.
     - [Plotting sequence logos to visualize motif variation](#logo)
     - [Calculate identity matrix](#identity)
 - [Getting Help](#help)
-<!--
-- [Limitations](#limitations)
--->
 - [Citing VAMPIRE](#cite)
 
 ## <a name="intro"></a>Introduction
