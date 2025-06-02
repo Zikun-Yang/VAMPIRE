@@ -171,10 +171,12 @@ Rscript scripts/SG_aln_plot.R -t 30 -b [identity_bed_file] -a [visualization_dat
 
 For detailed description of options, please see [the VAMPIRE Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/). If you have further questions, want to report a bug, or suggest a new feature, please raise an issue at the [issue page](https://github.com/zikun-yang/VAMPIRE/issues).
 
+<!--
 ## <a name="limitations"></a>Limitations
 
 - VAMPIRE is designed for annotating the variation of TRs. While it can be used for genome-wide TR annotation with basic information, it can be time-consuming due to the additional data it processes. To address this, we plan to develop a `scan` function optimized for whole-genome TR annotation.
 - TRs with very low copy numbers may be challenging to annotate accurately due to the limited availability of k-mers.
+-->
 
 ## <a name="cite"></a>Citating VAMPIRE
 
