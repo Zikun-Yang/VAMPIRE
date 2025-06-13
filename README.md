@@ -1,4 +1,5 @@
 # VAMPIRE
+[![PyPI version](https://badge.fury.io/py/vampire-tr.svg)](https://pypi.org/project/vampire-tr/)
 
 ## <a name="started"></a>Getting Started
 ```sh
@@ -50,13 +51,13 @@ See [Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/) for more details.
 
 ## <a name="intro"></a>Introduction
 
-VAMPIRE is a unified framework for *de novo* TR motif annotation, structural decomposition, and variation profiling.
+VAMPIRE is a unified framework for *de novo* [tandem repeat (TR)](https://en.wikipedia.org/wiki/Tandem_repeat) motif annotation, structural decomposition, and variation profiling.
 
 ## <a name="why"></a>Why VAMPIRE?
 
-- VAMPIRE reveals tandem repeat (TR) variation beyond simple copy number differences.
-- VAMPIRE's flexible parameter settings allow annotation of TRs with diverse characteristics, ranging from STRs, VNTRs to Megabase-scale satellites.
-- VAMPIRE produces detailed results in standard `.tsv` format, enabling seamless integration with custom analyses and in-depth research.
+- **Beyond Copy Number:** VAMPIRE uncovers not only copy number but also internal variation.
+- **Flexible and Comprehensive:** Its customizable parameters support the annotation of a wide range of TRs, from short tandem repeats (STRs) and variable number tandem repeats (VNTRs) to megabase-scale satellite arrays.
+- **Research-Ready Output:** VAMPIRE generates rich, structured results in standard `.tsv` format—ideal for downstream analysis and integration into custom pipelines.
 
 ## <a name="install"></a>Installation
 
@@ -66,7 +67,6 @@ singularity pull docker://zikun-yang/vampire-tr:latest
 
 # Install by pip 
 pip install vampire-tr # need to install mafft for using logo
-
 ```
 
 ## <a name="usage"></a>Usage
@@ -75,7 +75,7 @@ VAMPIRE now contains 7 subcommands: `anno`, `generator`, `mkref`, `evaluate`, `r
 
 ### <a name="anno"></a>anno - Annotate TR sequences
 
-One basic use of VAMPIRE is to annotate TR sequences in FASTA format. A typical command is as follows:
+One of the primary uses of VAMPIRE is to annotate tandem repeat (TR) sequences from input files in FASTA format. A typical command is as follows:
 ```sh
 # de novo annotate TR sequences
 vampire anno -t 8 tests/001-anno_STR.fa tests/001-anno_STR
@@ -168,7 +168,7 @@ Rscript scripts/SG_aln_plot.R -t 30 -b [identity_bed_file] -a [visualization_dat
 
 ## <a name="help"></a>Getting Help
 
-For detailed description of options, please see [the VAMPIRE Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/). If you have further questions, want to report a bug, or suggest a new feature, please raise an issue at the [issue page](https://github.com/zikun-yang/VAMPIRE/issues).
+For detailed description of options, please see [VAMPIRE Cookbook](https://zikun-yang.github.io/VAMPIRE_Cookbook/). If you have further questions, want to report a bug, or suggest a new feature, please raise an issue at the [issue page](https://github.com/zikun-yang/VAMPIRE/issues).
 
 <!--
 ## <a name="limitations"></a>Limitations
