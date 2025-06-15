@@ -1,2 +1,0 @@
-[console_scripts]
-vampire = vampire.main:main
