@@ -1,0 +1,103 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%labels
+    Author Zikun-Yang
+    Version v0.3
+
+%post
+
+    apt-get update && apt-get install -y \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        libxml2-dev \
+        libharfbuzz-dev \
+        libfribidi-dev \
+        libfontconfig1-dev \
+        libfreetype6-dev \
+        libpng-dev \
+        libtiff5-dev \
+        libjpeg-dev \
+        libudunits2-dev \
+        libgdal-dev \
+        libgeos-dev \
+        libproj-dev \
+        libblas-dev \
+        liblapack-dev \
+        gfortran \
+        locales
+
+    apt-get install -y locales
+    locale-gen en_US.UTF-8
+    update-locale LANG=en_US.UTF-8
+
+    # Install system Python 3 and pip
+    apt-get update && apt-get install -y \
+        python3 python3-pip wget curl bzip2
+
+    # Ensure pip3 is available
+    python3 -m pip install --upgrade pip
+
+    # Install Miniconda
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p /opt/conda
+    rm /tmp/miniconda.sh
+    export PATH="/opt/conda/bin:$PATH"
+
+    # Set up Conda environment
+    /opt/conda/bin/conda init
+    /opt/conda/bin/conda clean -afy
+
+    # Install conda compilers for R package builds
+    /opt/conda/bin/conda install -y -c conda-forge \
+        compilers \
+        gxx_linux-64 \
+        gcc_linux-64 \
+        gfortran_linux-64
+
+
+    # Install dependencies
+    /opt/conda/bin/conda install bioconda::mafft
+    /opt/conda/bin/conda install -y -c conda-forge r-base=4.4.2
+
+    # Install R packages
+    /opt/conda/bin/Rscript -e "install.packages(c(
+        'sf', 'blob', 'vctrs', 'bit64', 'hms'
+        ), repos='https://cloud.r-project.org')"
+
+    /opt/conda/bin/Rscript -e "install.packages(c(
+        'Matrix',
+        'MASS'
+    ), repos='https://cloud.r-project.org')"
+
+    /opt/conda/bin/Rscript -e "install.packages(c(
+        'mgcv',
+        'ggplot2',
+        'dplyr',
+        'scales',
+        'data.table',
+        'cowplot',
+        'glue',
+        'patchwork',
+        'argparse',
+        'RColorBrewer',
+        'parallel'  # part of base R, but listed for clarity
+    ), repos='https://cloud.r-project.org')"
+
+    # Install VAMPIRE tool
+    pip3 install --root-user-action=ignore vampire-tr
+
+    # Clean up
+    /opt/conda/bin/conda clean -afy
+
+%environment
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
+    # Add conda to PATH
+    export PATH=/opt/conda/bin:$PATH
+    export PATH=/usr/local/bin:$PATH
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    echo "This is VAMPIRE"
+    exec "$@"

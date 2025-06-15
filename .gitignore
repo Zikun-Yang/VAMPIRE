@@ -1,0 +1,7 @@
+__pycache__/
+src/vampire_tr.egg-info
+*.pyc
+.env
+dist/
+build/
+.vscode/

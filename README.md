@@ -3,9 +3,18 @@
 
 ## <a name="started"></a>Getting Started
 ```sh
-# Install VAMPIRE
-singularity pull docker://zikun-yang/vampire-tr:latest
-# You can also install by pip: pip install vampire-tr, but you need to install mafft for using logo
+# Use VAMPIRE by docker
+docker pull zikunyang/vampire-tr:latest
+docker run -it --name vampire-tr zikunyang/vampire-tr:latest
+docker exec vampire-tr vampire --help
+# Use VAMPIRE by singularity or apptainer
+singularity pull docker://zikunyang/vampire-tr:latest
+singularity exec vampire-tr_latest.sif vampire --help
+# You can also install by pip
+conda create -n vampire python=3.10 -y
+conda activate vampire
+conda install -c bioconda mafft # you need to install mafft for using logo function
+pip install vampire-tr 
 
 # Annotate STRs with
 vampire anno tests/001-anno_STR.fa tests/001-anno_STR
@@ -62,13 +71,31 @@ VAMPIRE is a unified framework for *de novo* [tandem repeat (TR)](https://en.wik
 ## <a name="install"></a>Installation
 
 ```sh
-# Use singularity (recommended)
-singularity pull docker://zikun-yang/vampire-tr:latest
+# Use singularity / apptainer (recommended)
+singularity pull docker://zikunyang/vampire-tr:latest
+singularity exec vampire-tr_latest.sif vampire --help
+
+# Use VAMPIRE by docker
+docker pull zikunyang/vampire-tr:latest
+docker run -it --name vampire-tr zikunyang/vampire-tr:latest
+docker exec vampire-tr vampire --help
 
 # Install by pip 
-pip install vampire-tr # need to install mafft for using logo
+conda create -n vampire python=3.10 -y
+conda activate vampire
+conda install -c bioconda mafft # you need to install mafft for using logo function
+pip install vampire-tr 
 ```
 
+!!! note Add Shortcut (Optional)
+    For Singularity user: 
+    > alias vampire="singularity exec vampire-tr_latest.sif vampire"
+    
+    For Docker user: 
+    > alias vampire="docker exec vampire-tr vampire"
+
+
+    
 ## <a name="usage"></a>Usage
 
 VAMPIRE now contains 7 subcommands: `anno`, `generator`, `mkref`, `evaluate`, `refine`, `logo`, and `identity`.
