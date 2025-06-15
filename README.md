@@ -1,16 +1,21 @@
 # VAMPIRE
-[![PyPI version](https://badge.fury.io/py/vampire-tr.svg)](https://pypi.org/project/vampire-tr/)
+[![PyPI version](https://badge.fury.io/py/vampire-tr.svg)](https://pypi.org/project/vampire-tr/)  [![Docker Image Version](https://img.shields.io/badge/docker-v0.3.0-blue)](https://hub.docker.com/r/zikunyang/vampire-tr/tags) [![License](https://img.shields.io/github/license/Zikun-Yang/VAMPIRE)](https://github.com/Zikun-Yang/VAMPIRE/blob/main/LICENSE)  [![Last Commit](https://img.shields.io/github/last-commit/Zikun-Yang/VAMPIRE)](https://github.com/Zikun-Yang/VAMPIRE/commits/main)
 
 ## <a name="started"></a>Getting Started
 ```sh
-# Use VAMPIRE by docker
+# Use singularity / apptainer to pull the prebuilt image from Docker Hub (recommended)
+singularity pull docker://zikunyang/vampire-tr:latest
+singularity exec vampire-tr_latest.sif vampire --help
+# OR build from the definition file in the repository (recommended)
+git clone git@github.com:Zikun-Yang/VAMPIRE.git
+cd VAMPIRE
+singularity build vampire-tr_latest.sif vampire.def
+singularity exec vampire-tr_latest.sif vampire --help
+# Use docker
 docker pull zikunyang/vampire-tr:latest
 docker run -it --name vampire-tr zikunyang/vampire-tr:latest
 docker exec vampire-tr vampire --help
-# Use VAMPIRE by singularity or apptainer
-singularity pull docker://zikunyang/vampire-tr:latest
-singularity exec vampire-tr_latest.sif vampire --help
-# You can also install by pip
+# Install by pip 
 conda create -n vampire python=3.10 -y
 conda activate vampire
 conda install -c bioconda mafft # you need to install mafft for using logo function
@@ -71,11 +76,16 @@ VAMPIRE is a unified framework for *de novo* [tandem repeat (TR)](https://en.wik
 ## <a name="install"></a>Installation
 
 ```sh
-# Use singularity / apptainer (recommended)
+# Use singularity / apptainer to pull the prebuilt image from Docker Hub (recommended)
 singularity pull docker://zikunyang/vampire-tr:latest
 singularity exec vampire-tr_latest.sif vampire --help
+# OR build from the definition file in the repository (recommended)
+git clone git@github.com:Zikun-Yang/VAMPIRE.git
+cd VAMPIRE
+singularity build vampire-tr_latest.sif vampire.def
+singularity exec vampire-tr_latest.sif vampire --help
 
-# Use VAMPIRE by docker
+# Use docker
 docker pull zikunyang/vampire-tr:latest
 docker run -it --name vampire-tr zikunyang/vampire-tr:latest
 docker exec vampire-tr vampire --help
@@ -87,12 +97,20 @@ conda install -c bioconda mafft # you need to install mafft for using logo funct
 pip install vampire-tr 
 ```
 
-!!! note Add Shortcut (Optional)
-    For Singularity user: 
-    > alias vampire="singularity exec vampire-tr_latest.sif vampire"
-    
-    For Docker user: 
-    > alias vampire="docker exec vampire-tr vampire"
+ Add shortcut if you use the container (Optional)
+ ```bash
+# Open your ~/.bashrc (or ~/.zshrc) and add the following lines:
+
+# For Singularity users:
+alias vampire="singularity exec /path/to/your/container/vampire-tr_latest.sif vampire"
+
+# For Docker users (assuming a running container named 'vampire-tr'):
+alias vampire="docker exec vampire-tr vampire"
+
+# Save the file, then apply the changes:
+source ~/.bashrc
+```
+
 
 
     
