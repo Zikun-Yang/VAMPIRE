@@ -53,5 +53,6 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vampire.resources" = ["refMotif.fa"]
+"vampire.resources" = ["refMotif.fa",
+		       "scan_web_summary_template.html"]
 

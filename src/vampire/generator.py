@@ -1,10 +1,13 @@
 # generator.py
 def run_generator(args, parser):
     '''
+
     version: 0.1.0
     description: generate tandem repeat sequences
-    input: motifs, length, mutation rate, seed
-    output: prefix (tandem repeat sequences in fasta format, annotation in tsv format)
+    Isnput:
+        motifs, length, mutation rate, seed
+    output:
+        prefix (tandem repeat sequences in fasta format, annotation in tsv format)
     '''
 
     from vampire.generator_utils import TR_singleMotif, TR_multiMotif

@@ -1,21 +1,60 @@
 import argparse
+import logging
+from typing import List
+
+def _parse_int_list(s: str) -> List[int]:
+    return [int(x) for x in s.split(",")]
 
 def main():
     parser = argparse.ArgumentParser(
         prog='vampire',
-        description='🧛VAMPIRE: An integrated tool for annotating the motif variation and complex patterns in tandem repeats.'
+        description='🧛 VAMPIRE: comprehensive tool for annotating the motif variation and complex patterns in tandem repeats.'
     )
 
     subparsers = parser.add_subparsers(title='subcommands', dest='command')
     subparsers.required = True
 
     # ------------------------------------------------------------
-    # anno
+    # scan
     # ------------------------------------------------------------
-    # parser_merge = subparsers.add_parser('merge', help='Merge multiple files')
-    # parser_merge.add_argument('--input', required=True, help='Input directory')
-    # parser_merge.add_argument('--output', required=True, help='Output file')
-    # parser_merge.set_defaults(func=run_merge)
+    parser_scan = subparsers.add_parser('scan',
+                                        description='VAMPIRE scan v0.1.0\n'
+                                                    'Usage: vampire scan [options] <input.fa> <output_prefix>\n'
+                                                    'For example: vampire scan <input.fa> <output_prefix>\n',
+                                        formatter_class=argparse.RawTextHelpFormatter,
+                                        help='scan tandem repeats on genome')
+    # I/O Options
+    file_group = parser_scan.add_argument_group('I/O Options')
+    file_group.add_argument("fasta", type=str, help='Input FASTA file to scan TRs')
+    file_group.add_argument("prefix", type=str, help="Output prefix")
+
+    # General Options
+    general_group = parser_scan.add_argument_group('General Options')
+    general_group.add_argument("-t", "--thread", "--threads", dest="threads", type=int, default=8, help="Number of threads [8]")
+    general_group.add_argument("--debug", action="store_true", help="Output debuf info and keep temporary files [False]")
+    general_group.add_argument("--seq-win-size", dest="seq_win_size", type=int, default=5000000, help="Window sequence size for scanning [5000000]")
+    general_group.add_argument("--seq-ovlp-size", dest="seq_ovlp_size", type=int, default=100000, help="Overlap sequence size between windows [100000]")
+
+    # Candidate Finding Options
+    candidate_group = parser_scan.add_argument_group('Candidate Finding Options')
+    candidate_group.add_argument("--ksize", type=_parse_int_list, default=[17, 13, 9, 5, 3], help="List of k-mer sizes for detect, e.g. --ksize 17,13,9 [17, 13, 9, 5, 3]")
+    candidate_group.add_argument("--rolling-win-size", type=int, default=5, help="Rolling window size to compute smoothness score [5]")
+    candidate_group.add_argument("--min-smoothness", type=int, default=50, help="Minimum smoothness score to call candidates [50]")
+
+    # Alignment Options
+    alignment_group = parser_scan.add_argument_group('Alignment Options')
+    alignment_group.add_argument("--match-score", type=int, default=2, help="Match score for alignment [2]")
+    alignment_group.add_argument("--mismatch-penalty", type=int, default=7, help="Mismatch penalty for alignment [7]")
+    alignment_group.add_argument("--gap-open-penalty", type=int, default=7, help="Gap open penalty for alignment [7]")
+    alignment_group.add_argument("--gap-extend-penalty", type=int, default=7, help="Gap extend penalty for alignment [7]")
+
+    # Output Options
+    output_group = parser_scan.add_argument_group('Output Options')
+    output_group.add_argument("-p", "--max-period", dest="max_period", type=int, default=1000, help="Maximum period for output [1000]")
+    output_group.add_argument("-s", "--min-score", dest="min_score", type=int, default=50, help="Minimum alignment score for output [50]")
+    output_group.add_argument("--format", type=str, choices=["brief", "trf", "bed"], default="trf", help="Output format [trf]") # TODO
+    output_group.add_argument("--composite", action="store_true", default=False, help="Use composite alignment [False]") # TODO
+    output_group.add_argument("--skipreport", action="store_true", default=False, help="Skip HTML report generation [False]")
 
     # ------------------------------------------------------------
     # anno
@@ -35,8 +74,8 @@ def main():
 
     # General Options
     general_group = parser_anno.add_argument_group('General Options')
-    general_group.add_argument('-t', '--thread', type=int, default=1, help='Number of threads [1]')
-    general_group.add_argument('--AUTO', action='store_true', help='Automatically estimate parameters [False]')
+    general_group.add_argument('-t', '--thread', '--threads', dest="threads", type=int, default=1, help='Number of threads [1]')
+    general_group.add_argument('--AUTO', '--auto', dest="AUTO", action='store_true', help='Automatically estimate parameters [False]')
     general_group.add_argument('--debug', action='store_true', help='Output running time of each module [False]')
     general_group.add_argument('--window-length', type=int, default=5000, help='Parallel window size [5000]')
     general_group.add_argument('--overlap-length', type=int, default=1000, help='Windows overlap size [1000]')
@@ -103,7 +142,7 @@ def main():
                                             help='Evaluate the tandem repeats.')
     parser_evaluate.add_argument('prefix', help='input prefix of raw results')
     parser_evaluate.add_argument('output', help='output prefix of evaluation results')
-    parser_evaluate.add_argument('-t','--thread', type=int, default=6, help='thread number [6]')
+    parser_evaluate.add_argument('-t','--thread','--threads', dest="threads", type=int, default=6, help='thread number [6]')
     parser_evaluate.add_argument('-p','--percentage', type=int, default=75, help='threshold for identifying abnormal values (0-100) [75]')
     parser_evaluate.add_argument('-s','--show-distance', action='store_true', help='set to show detailed distance on heatmap')
 
@@ -118,7 +157,7 @@ def main():
     parser_refine.add_argument("prefix", type=str, help="output prefix of raw results")
     parser_refine.add_argument("action", type=str, help="action file")
     parser_refine.add_argument("-o", "--out", type=str, default=None, help="output prefix of modified results [prefix.revised]")
-    parser_refine.add_argument("-t", "--thread", type=int, default=8, help="number of thread [8]")
+    parser_refine.add_argument("-t", "--thread", "--threads", dest="threads", type=int, default=8, help="number of thread [8]")
 
     # ------------------------------------------------------------
     # logo
@@ -144,7 +183,7 @@ def main():
     parser_identity.add_argument("prefix", type=str, help="prefix of the input file")
     parser_identity.add_argument("output", type=str, help="output prefix")
     parser_identity.add_argument("-w", "--window-size", type=int, default=100, help="window size (unit: motif)")
-    parser_identity.add_argument("-t", "--thread", type=int, default=30, help="thread number")
+    parser_identity.add_argument("-t", "--thread", "--threads", dest="threads", type=int, default=30, help="thread number")
     parser_identity.add_argument("--mode", type=str, default='raw', help="mode: raw or invert")
     parser_identity.add_argument("--max-indel", type=int, default=0, help="maximum indel length")
     parser_identity.add_argument("--min-indel", type=int, default=0, help="minimum indel length")
@@ -158,35 +197,45 @@ def main():
     parser_plotheatmap.set_defaults(func=run_plotheatmap)'''
 
     args = parser.parse_args()
+    DEBUG = getattr(args, "debug", False)
+    logging.basicConfig(
+        level=logging.DEBUG if DEBUG else logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
     match args.command:
+        case "scan":
+            from vampire.scan import run_scan
+            run_scan(args)
+
         case "anno":
             from vampire.anno import run_anno
-            run_anno(args, parser)
+            run_anno(args)
 
         case "generator":
             from vampire.generator import run_generator
-            run_generator(args, parser)
+            run_generator(args)
 
         case "mkref":
             from vampire.mkref import run_mkref
-            run_mkref(args, parser)
+            run_mkref(args)
 
         case "evaluate":
             from vampire.evaluate import run_evaluate
-            run_evaluate(args, parser)
+            run_evaluate(args)
 
         case "refine":
             from vampire.refine import run_refine
-            run_refine(args, parser)
+            run_refine(args)
 
         case "logo":
             from vampire.logo import run_logo
-            run_logo(args, parser)
+            run_logo(args)
 
         case "identity":
             from vampire.identity import run_identity
-            run_identity(args, parser)
+            run_identity(args)
 
         case _:
             parser.print_help()
