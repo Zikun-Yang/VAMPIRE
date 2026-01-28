@@ -1,13 +1,5 @@
 import argparse
 
-from vampire.anno import run_anno
-from vampire.generator import run_generator
-from vampire.mkref import run_mkref
-from vampire.evaluate import run_evaluate
-from vampire.refine import run_refine
-from vampire.logo import run_logo
-from vampire.identity import run_identity
-
 def main():
     parser = argparse.ArgumentParser(
         prog='vampire',
@@ -76,22 +68,19 @@ def main():
     output_group.add_argument('--quiet', action='store_true', help="Don't output thread completion info")
     output_group.add_argument('-s', '--score', type=float, default=5, help='Minimum output score [5]')
 
-    parser_anno.set_defaults(func=run_anno, _parser=parser_anno)
-
     # ------------------------------------------------------------
     # generator
     # ------------------------------------------------------------
     parser_generator = subparsers.add_parser('generator',
                                             description='VAMPIRE generator v0.1.0\n'
-                                                'Usage: vampire generator -m [motif] -l [length] -r [mutation_rate] -s [seed] -p [output_prefix]\n'
-                                                'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n',
-                                             help='Generate the reference database from annotation')
+                                                        'Usage: vampire generator -m [motif] -l [length] -r [mutation_rate] -s [seed] -p [output_prefix]\n'
+                                                        'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n',
+                                            help='Generate tandem repeat sequences from reference motifs')
     parser_generator.add_argument('-m', '--motifs', required=True, type=str, nargs='+', help='Input motif(s)')
     parser_generator.add_argument('-l', '--length', default=1000, type=int, help='Length of simulated tandem repeat')
     parser_generator.add_argument('-r', '--mutation-rate', default=0, type=float, help='Mutation rate, 0 - 1')
     parser_generator.add_argument('-s', '--seed', default=42, type=int, help='Random seed, DEFAULT: 42')
     parser_generator.add_argument('-p', '--prefix', required=True, type=str, help='Output prefix')
-    parser_generator.set_defaults(func=run_generator)
 
     # ------------------------------------------------------------
     # mkref
@@ -103,7 +92,6 @@ def main():
                                          help='Make the reference database from annotation result')
     parser_mkref.add_argument('prefix', type=str, help='annotation result prefix')
     parser_mkref.add_argument('output', type=str, help='output')
-    parser_mkref.set_defaults(func=run_mkref)
 
     # ------------------------------------------------------------
     # evaluate
@@ -118,7 +106,6 @@ def main():
     parser_evaluate.add_argument('-t','--thread', type=int, default=6, help='thread number [6]')
     parser_evaluate.add_argument('-p','--percentage', type=int, default=75, help='threshold for identifying abnormal values (0-100) [75]')
     parser_evaluate.add_argument('-s','--show-distance', action='store_true', help='set to show detailed distance on heatmap')
-    parser_evaluate.set_defaults(func=run_evaluate)
 
     # ------------------------------------------------------------
     # refine
@@ -132,7 +119,6 @@ def main():
     parser_refine.add_argument("action", type=str, help="action file")
     parser_refine.add_argument("-o", "--out", type=str, default=None, help="output prefix of modified results [prefix.revised]")
     parser_refine.add_argument("-t", "--thread", type=int, default=8, help="number of thread [8]")
-    parser_refine.set_defaults(func=run_refine)
 
     # ------------------------------------------------------------
     # logo
@@ -146,7 +132,6 @@ def main():
     parser_logo.add_argument("output", type=str,  help="pdf/png name")
     parser_logo.add_argument("-t", "--type", type=str, default='motif', help="motif / annotation")
     parser_logo.add_argument("-f", "--format", type=str, default='pdf', help="pdf/png")
-    parser_logo.set_defaults(func=run_logo)
 
     # ------------------------------------------------------------
     # identity
@@ -163,7 +148,6 @@ def main():
     parser_identity.add_argument("--mode", type=str, default='raw', help="mode: raw or invert")
     parser_identity.add_argument("--max-indel", type=int, default=0, help="maximum indel length")
     parser_identity.add_argument("--min-indel", type=int, default=0, help="minimum indel length")
-    parser_identity.set_defaults(func=run_identity)
 
     # ------------------------------------------------------------
     # plotheatmap
@@ -173,53 +157,40 @@ def main():
     parser_plotheatmap.add_argument('--output', required=True, help='Output file')
     parser_plotheatmap.set_defaults(func=run_plotheatmap)'''
 
-
-    
     args = parser.parse_args()
-    args.func(args, parser)
+
+    match args.command:
+        case "anno":
+            from vampire.anno import run_anno
+            run_anno(args, parser)
+
+        case "generator":
+            from vampire.generator import run_generator
+            run_generator(args, parser)
+
+        case "mkref":
+            from vampire.mkref import run_mkref
+            run_mkref(args, parser)
+
+        case "evaluate":
+            from vampire.evaluate import run_evaluate
+            run_evaluate(args, parser)
+
+        case "refine":
+            from vampire.refine import run_refine
+            run_refine(args, parser)
+
+        case "logo":
+            from vampire.logo import run_logo
+            run_logo(args, parser)
+
+        case "identity":
+            from vampire.identity import run_identity
+            run_identity(args, parser)
+
+        case _:
+            parser.print_help()
+            parser.exit(1)
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
-
-'''def get_scripts():
-    return {
-        os.path.splitext(f)[0]: os.path.join(SCRIPT_DIR, f)
-        for f in os.listdir(SCRIPT_DIR)
-        if f.endswith(".py") and not f.startswith(".")
-    }
-
-def build_parser(script_map):
-    parser = argparse.ArgumentParser(
-        prog="vampire",
-        description="🧛 VAMPIRE Toolkit - Unified interface for all internal scripts"
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True, help="Available tools")
-
-    for name, path in script_map.items():
-        sub = subparsers.add_parser(name, help=f"Run {name}.py script")
-        sub.add_argument("args", nargs=argparse.REMAINDER, help="Arguments passed to the script")
-        sub.set_defaults(script_path=path)
-
-    return parser'''
-
-'''def main():
-    script_map = get_scripts()
-    parser = build_parser(script_map)
-    args = parser.parse_args()
-
-    # 构建执行命令
-    cmd = [sys.executable, args.script_path] + args.args
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Script {args.command} failed with return code {e.returncode}")
-        sys.exit(e.returncode)
-
-if __name__ == "__main__":
-    main()'''

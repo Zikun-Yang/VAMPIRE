@@ -37,7 +37,7 @@ dependencies = [
     "logomaker"
 
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 
 [project.urls]
 Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"

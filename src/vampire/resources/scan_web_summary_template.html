@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VAMPIRE</title>
+    <link rel="icon" href="logo.png" type="image/png">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #000000;
+            --secondary-color: #2c3e50;
+            --accent-color: #e74c3c;
+            
+            /* sizes */
+            --header-height: 70px;
+            --container-width: 1100px;
+            /* colors*/
+            --background-color-light: white;
+            --background-color-hover: #f0f0f0;
+            --background-color-dark: #2c3e50;
+            --text-color-light: #ffffff;
+            --text-color-gray: #a4a4a4;
+            --text-color-dark: #333;
+            --text-color-black: #000000;
+            --border-color: rgba(0, 0, 0, 0.1);
+            --border-radius: 5px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            font-size: 18px;
+            color: var(--text-color-dark);
+            background-color: var(--background-color-light);
+            line-height: 1.6;
+        }
+        
+        /* Header */
+        #header {
+            /*text-align: center;*/
+            align-items: center;
+            justify-content: center;
+            display: flex;
+            height: var(--header-height);
+            background: var(--primary-color);
+            color: var(--text-color-light);
+        }
+
+        #header-container {
+            /*text-align: center;*/
+            align-items: center;
+            display: flex;
+            height: 100%;
+            width: var(--container-width);
+        }
+
+        #header-logo-container {
+            float: left;
+            width: 40px;
+            height: 40px;
+            margin-right: 10px;
+            background-color: coral;
+        }
+
+        #header-text-container {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: flex-end;
+            width: 100%; 
+        }
+
+        #title {
+            font-size: 25px;
+        }
+        
+        #generated-time {
+            font-size: 15px;
+        }
+
+        /* Page */
+        #page {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            padding: 20px 0 20px 0;
+        }
+
+        #page-container {
+            height: 100%;
+            width: var(--container-width);
+        }
+        
+        #jobname {
+            font-size: 35px;
+            color: var(--text-color-black);
+            margin-top: 5px;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        
+        .tab-button {
+            background-color: var(--background-color-light);
+            border: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            border-top-left-radius: var(--border-radius);
+            border-top-right-radius: var(--border-radius);
+            margin-bottom: -1.5px;
+            padding: 10px 25px 10px 25px;
+            font-size: 18px;
+            color: var(--text-color-gray);
+            cursor: pointer;
+            transition: all 0.3s;
+            z-index: 1;
+        }
+
+        .tab-button:hover {
+            background-color: var(--background-color-hover);
+            z-index: 1;
+        }
+
+        .tab-button.active {
+            color: var(--text-color-dark);
+            border-bottom: 1px solid var(--background-color-light);
+            z-index: 100;
+            position: relative;
+        }
+
+        .tab-button.active:hover {
+            background-color: var(--background-color-hover);
+        }
+
+        .tab-content {
+            display: none;
+            border-top: 1px solid var(--border-color);
+            border-radius: 0 0 var(--border-radius) var(--border-radius);
+            padding: 0;
+            padding-top: 10px;
+            background-color: var(--background-color-light);
+            z-index: 50;
+        }
+
+        .tab-content.active {
+            display: block;
+            z-index: 50;
+        }
+
+        .columns {
+            display: flex;
+            flex-direction: row;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            margin: 10px 0 10px 0;
+        }
+
+        #footer {
+            text-align: center;
+            padding: 10px 20% 0 20%;
+            color: var(--text-color-gray);
+            font-size: 15px;
+            font-weight: 100;
+            border-top: 1px solid #dee2e6;
+        }
+        
+        .column {
+            width: 537px; /* 500px */
+            gap: 0px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .card {
+            background: var(--background-color-light);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            margin: 10px 0 10px 0;
+            padding: 5px 15px 5px 15px;
+            width: 537px; /* 500px */
+        }
+
+        .card-full-width {
+            background: var(--background-color-light);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            margin: 10px 0 10px 0;
+            padding: 5px 15px 5px 15px;
+            width: 100%;
+            /* Width will be set dynamically by JavaScript to span two columns */
+        }
+        
+        .card-title {
+            font-size: 25px;
+            color: var(--text-color-black);
+            margin-top: 5px;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        .header-questionMark {
+            cursor: pointer;
+            height: 1rem;
+            margin-left: .5rem;
+            opacity: .5;
+        }
+        
+        .card-content {
+            font-size: 18px;
+            color: var(--text-color-black);
+            margin-top: 5px;
+            margin-bottom: 5px;
+            font-weight: 400;
+        }
+
+        .table{
+            width: 100%;
+            border-collapse: collapse;
+            border-top: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            border-left: 0px solid transparent;
+            border-right: 0px solid transparent;
+            border-radius: var(--border-radius);
+            margin: 5px 5px 5px 5px;
+            padding: 10px 15px 10px 15px;
+        }
+
+        .table tr{
+            border-top: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+            background-color: var(--background-color-light);
+        }
+
+        .table tr:hover{
+            background-color: var(--background-color-hover);
+        }
+
+        .table-key {
+            text-align: left;
+            color: var(--text-color-dark);
+            padding: 5px 0 5px 0;
+        }
+
+        .table-value {
+            font-size: 16px;
+            text-align: right;
+            color: var(--text-color-dark);
+            padding: 5px 0 5px 0;
+        }
+
+        .scrollable-text {
+            width: 100%;
+            max-width: 100%;
+            white-space: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+
+        /* background color of modebar */
+        .modebar-group {
+            background-color: transparent !important;
+        }
+
+        /* color of modebar buttons */
+        .modebar-btn path {
+            fill: rgba(0, 0, 0, 0.3) !important;
+        }
+
+        .updatemenu-item-rect {
+            fill: var(--background-color-light) !important;
+            fill-opacity: 1 !important;
+        }
+        /**/
+
+        .chart-container { /*not used*/
+            height: 450px;
+            width: 100%;
+            min-height: 400px;
+        }
+        
+        .chart-placeholder { /*not used*/
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #6c757d;
+            font-style: italic;
+            border: 2px dashed #dee2e6;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        .control-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.95em;
+        }
+        
+        .control-btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 1024px) {
+            .main-container {
+                padding: 30px 40px;
+            }
+            .card {
+                width: 450px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
+                padding: 20px 30px;
+            }
+            .card {
+                width: 100%;
+            }
+            .chart-container {
+                height: 400px;
+            }
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .main-container {
+                padding: 15px 20px;
+            }
+            .chart-container {
+                height: 350px;
+            }
+            .card {
+                padding: 15px;
+                width: 100%;
+            }
+            .card-title {
+                font-size: 1.2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <div id="header-container">
+            <div id="header-logo-container">
+                <img src="https://raw.githubusercontent.com/0xGarry/VAMPIRE/main/src/vampire/resources/logo.png" alt="" class="logo">
+            </div>
+            <div id="header-text-container">
+                <p id="title">VAMPIRE • $SUBCMD$</p>
+                <p id="generated-time">Generated: $TIME$</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="page">
+        <div id="page-container">
+            <div id="jobname">
+                <p>$JOB_NAME$</p>
+            </div>
+            <div id="tabs">
+                <button class="tab-button active" data-tab="summary" onclick="switchTab('summary')">Summary</button>
+                <button class="tab-button" data-tab="distribution" onclick="switchTab('distribution')">Distribution</button>
+                <button class="tab-button" data-tab="motif" onclick="switchTab('motif')">Motif</button>
+            </div>
+
+            <!-- Summary Tab Content -->
+            <div class="tab-content active" id="tab-summary-content">
+                <div class="columns" id="summary-charts-container">
+                    <div class="card-full-width">
+                        <div class="card-title">Command</div>
+                        <div class="card-content">
+                            <p class="scrollable-text">$COMMAND$</p>
+                        </div>
+                    </div>
+                    <div class="column">
+                        <div class="card">
+                            <div class="card-title">Run Summary</div>
+                            <div class="card-content">
+                                <table class="table">
+                                    <tbody>
+                                    <tr>
+                                        <td class="table-key">Version</td>
+                                        <td class="table-value">$VERSION$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Subcommand</td>
+                                        <td class="table-value">$SUBCMD$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Total Running Time</td>
+                                        <td class="table-value">$TOTAL_RUNNING_TIME$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Max Period</td>
+                                        <td class="table-value">$MAX_PERIOD$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Min Smoothness Score</td>
+                                        <td class="table-value">$MIN_SMOOTHNESS_SCORE$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Rolling Window Size</td>
+                                        <td class="table-value">$ROLLING_WINDOW_SIZE$</td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Candidate Region Statistics</div>
+                            <div class="card-content">Content</div>
+                        </div>
+                    </div>
+                    <div class="column">
+                        <div class="card">
+                            <div class="card-title">
+                                Smoothness Score
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" class="header-questionMark" data-test="cellsQuestionMark">
+                                    <path d="M256 8C119.043 8 8 119.083 8 256c0 136.997 111.043 248 248 248s248-111.003 248-248C504 119.083 392.957 8 256 8zm0 448c-110.532 0-200-89.431-200-200 0-110.495 89.472-200 200-200 110.491 0 200 89.471 200 200 0 110.53-89.431 200-200 200zm107.244-255.2c0 67.052-72.421 68.084-72.421 92.863V300c0 6.627-5.373 12-12 12h-45.647c-6.627 0-12-5.373-12-12v-8.659c0-35.745 27.1-50.034 47.579-61.516 17.561-9.845 28.324-16.541 28.324-29.579 0-17.246-21.999-28.693-39.784-28.693-23.189 0-33.894 10.977-48.942 29.969-4.057 5.12-11.46 6.071-16.666 2.124l-27.824-21.098c-5.107-3.872-6.251-11.066-2.644-16.363C184.846 131.491 214.94 112 261.794 112c49.071 0 101.45 38.304 101.45 88.8zM298 368c0 23.159-18.841 42-42 42s-42-18.841-42-42 18.841-42 42-42 42 18.841 42 42z"></path>
+                                </svg>
+                            </div>
+                            <div class="title-help-text-container" data-test="cellsHelpTable" style="display: block;">
+                                <dt data-test="helpEstimatedNumberOfCellsText">Estimated Number of Cells</dt><dd data-test="helpEstimatedNumberOfCellsDesc">
+                            </div>
+                            <div class="card-content" style="width: 100%; height: 100%;">
+                                $SMOOTHNESS_PLOT$
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Header</div>
+                            <div class="card-content">Content</div>
+                        </div>
+                    </div>
+                    
+
+
+                    
+                </div>
+            </div>
+
+            <!-- Distribution Tab Content -->
+            <div class="tab-content" id="tab-distribution-content">
+                <div class="columns" id="distribution-charts-container">
+                    <div class="card-full-width">
+                        <div class="card-title">Distribution</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $TR_DISTRIBUTION_PLOT$
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Motif Tab Content -->
+            <div class="tab-content" id="tab-motif-content">
+                <div class="columns" id="motif-charts-container">
+                    <div class="card">
+                        <div class="card-title">Length/Period</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $LENGTH_PERIOD_DISTRIBUTION_PLOT$
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Entropy</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $ENTROPY_DISTRIBUTION_PLOT$
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Enriched motifs (by TR number)</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $ENRICHED_MOTIFS_BY_TR_NUMBER_PLOT$
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Enriched motifs (by copy number)</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $ENRICHED_MOTIFS_BY_COPY_NUMBER_PLOT$
+                        </div>
+                    </div>
+                    <div class="card-full-width">
+                        <div class="card-title">Largest TRs (by copy number)</div>
+                        <div class="card-content" style="width: 100%; height: 100%;">
+                            $LARGEST_TRS_BY_COPY_NUMBER_PLOT$
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="footer">
+                <p>Interactive web summary generated by VAMPIRE</span></p>
+                <p>Welcome to VAMPIRE! 欢迎使用VAMPIRE!</p>
+                <p>© <span id="copyright-year"></span> VAMPIRE</p>
+            </div>
+        </div>
+    </div>
+
+
+    
+    <script>
+        document.getElementById('copyright-year').textContent = new Date().getFullYear();
+
+        // Current active tab
+        let currentTab = 'summary';
+
+        // Switch between tabs
+        function switchTab(tabName) {
+            // Don't switch if already on this tab
+            if (currentTab === tabName) {
+                return;
+            }
+
+            // Remove active class from all tab buttons
+            const tabButtons = document.querySelectorAll('.tab-button');
+            tabButtons.forEach(button => {
+                button.classList.remove('active');
+            });
+
+            // Remove active class from all tab contents
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(content => {
+                content.classList.remove('active');
+            });
+
+            // Add active class to selected tab button
+            const activeButton = document.querySelector(`[data-tab="${tabName}"]`);
+            if (activeButton) {
+                activeButton.classList.add('active');
+            }
+
+            // Show selected tab content
+            const activeContent = document.getElementById(`tab-${tabName}-content`);
+            if (activeContent) {
+                activeContent.classList.add('active');
+            }
+
+            // Update current tab
+            currentTab = tabName;
+
+            // Initialize or reinitialize Masonry for the active tab
+            const containerId = `${tabName}-charts-container`;
+            if (!masonryInstances[tabName]) {
+                // Initialize Masonry for this tab if not already initialized
+                setTimeout(function() {
+                    masonryInstances[tabName] = initMasonry(containerId);
+                    if (masonryInstances[tabName]) {
+                        relayoutMasonry(tabName);
+                    }
+                }, 50);
+            } else {
+                // Relayout existing Masonry instance
+                setTimeout(function() {
+                    relayoutMasonry(tabName);
+                }, 50);
+            }
+
+            // Resize Plotly charts if any
+            if (typeof Plotly !== 'undefined') {
+                setTimeout(function() {
+                    Plotly.Plots.resize(activeContent);
+                }, 100);
+            }
+        }
+
+        // Legacy functions for backward compatibility
+        function showSummary() {
+            switchTab('summary');
+        }
+
+        function showDistribution() {
+            switchTab('distribution');
+        }
+
+        function showMotif() {
+            switchTab('motif');
+        }
+
+        // Function to add a chart dynamically
+        function addChart(title, chartData, chartId, tabName) {
+            // Use current tab if not specified
+            const targetTab = tabName || currentTab;
+            const containerId = `${targetTab}-charts-container`;
+            const container = document.getElementById(containerId);
+            
+            if (!container) {
+                console.error(`Container ${containerId} not found`);
+                return;
+            }
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            
+            const cardTitle = document.createElement('div');
+            cardTitle.className = 'card-title';
+            cardTitle.textContent = title;
+            
+            const chartContainer = document.createElement('div');
+            chartContainer.className = 'chart-container';
+            chartContainer.id = chartId || `chart-${targetTab}-${container.children.length + 1}`;
+            
+            card.appendChild(cardTitle);
+            card.appendChild(chartContainer);
+            container.appendChild(card);
+            
+            // Render Plotly chart
+            if (chartData && typeof Plotly !== 'undefined') {
+                Plotly.newPlot(chartContainer.id, chartData.data || [], chartData.layout || {}, chartData.config || {})
+                    .then(function() {
+                        // Relayout Masonry after chart is rendered
+                        relayoutMasonry(targetTab);
+                    });
+            } else {
+                const placeholder = document.createElement('div');
+                placeholder.className = 'chart-placeholder';
+                placeholder.textContent = 'Chart will be rendered here';
+                chartContainer.appendChild(placeholder);
+            }
+            
+            // Relayout Masonry after adding new card
+            relayoutMasonry(targetTab);
+            updateChartStats();
+        }
+        
+    </script>
+</body>
+</html>
