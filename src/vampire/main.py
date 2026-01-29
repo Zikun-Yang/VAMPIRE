@@ -37,7 +37,7 @@ def main():
 
     # Candidate Finding Options
     candidate_group = parser_scan.add_argument_group('Candidate Finding Options')
-    candidate_group.add_argument("--ksize", type=_parse_int_list, default=[17, 13, 9, 5, 3], help="List of k-mer sizes for detect, e.g. --ksize 17,13,9 [17, 13, 9, 5, 3]")
+    candidate_group.add_argument("--ksize", type=_parse_int_list, default=[17, 13, 9, 5, 3], help="List of k-mer sizes for detect, e.g. --ksize 17,13,9,5,3 [17, 13, 9, 5, 3]")
     candidate_group.add_argument("--rolling-win-size", type=int, default=5, help="Rolling window size to compute smoothness score [5]")
     candidate_group.add_argument("--min-smoothness", type=int, default=50, help="Minimum smoothness score to call candidates [50]")
 
@@ -198,11 +198,21 @@ def main():
 
     args = parser.parse_args()
     DEBUG = getattr(args, "debug", False)
-    logging.basicConfig(
-        level=logging.DEBUG if DEBUG else logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    if DEBUG:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        logging.getLogger("numpy").setLevel(logging.WARNING)
+        logging.getLogger("numba").setLevel(logging.WARNING)
+        logging.getLogger("plotly").setLevel(logging.WARNING)
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
 
     match args.command:
         case "scan":

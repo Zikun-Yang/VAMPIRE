@@ -77,10 +77,10 @@ def split_fasta_by_window(fasta: list[SeqRecord], seq_win_size: int, seq_ovlp_si
     window_filepaths: List[str] = []
     window_num = 0
     for record in fasta:
+        logger.debug(f"Splitting record: {record.id}, window starts: {",".join([f"{i}-{i + seq_win_size}" for i in range(0, len(record.seq), seq_win_size - seq_ovlp_size)])}")
         for i in range(0, len(record.seq), seq_win_size - seq_ovlp_size):
             window = str(record.seq[i : i + seq_win_size]).upper()
             if i != 0 and len(window) < seq_ovlp_size:
-                ###print(f"Window size is less than overlap size: {len(window)} < {overlap_size}")
                 continue
 
             output_filepath = f"{job_dir}/windows/window_{window_num + 1}.tsv"
@@ -121,12 +121,13 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
     with open(window_filepath, 'r', newline='', encoding='utf-8') as f:
         reader = csv.reader(f, delimiter='\t')
         for row in reader:
-            window_id, chrom, win_start, win_end, seq = row
+            win_id, chrom, win_start, win_end, seq = row
     win_start, win_end = int(win_start), int(win_end)
-    win = (window_id, chrom, win_start, win_end, seq)
+    win = (win_id, chrom, win_start, win_end, seq)
 
     # call raw regions
     raw_rgns: List[Region] = call_raw_rgns(job_dir, win, ksizes, max_dist, score_vision_size, min_smoothness)
+    logger.debug(f"window {win_id}: call_raw_rgns finished")
     
     # if no raw regions found, return empty list
     if not raw_rgns:
@@ -137,6 +138,7 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
 
     # merge overlapped or contained raw regions, merge k into list, use max score
     merged_rgns: List[Region] = merge_rgns(raw_rgns, include_offset=True)
+    logger.debug(f"window {win_id}: merge_rgns finished")
 
     # return empty list if no merged regions
     if not merged_rgns:
@@ -144,33 +146,40 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
 
     # remove concatemer motifs
     merged_rgns = remove_concatemer(merged_rgns, seq)
+    logger.debug(f"window {win_id}: remove_concatemer finished")
 
     # write merged raw regions to file
-    output_filepath = f"{job_dir}/raw_rgns/window_{window_id}.tsv"
+    output_filepath = f"{job_dir}/raw_rgns/window_{win_id}.tsv"
     with open(output_filepath, 'w', newline='', encoding='utf-8') as fi:
         writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
         writer.writerows(merged_rgns)
 
     # polish region borders
     polished_rgns: List[Region] = polish_rgns(merged_rgns, win, composite)
+    logger.debug(f"window {win_id}: polish_rgns finished")
 
     # sort by coordinates
     polished_rgns.sort(key=lambda x: (x[2], -x[3]))
 
     # merge overlapped polished regions
     merged_rgns: List[Region] = merge_rgns(polished_rgns, include_offset=False)
+    logger.debug(f"window {win_id}: merge_rgns finished")
 
     # filter polished regions that are too short
     final_rgns: List[Region] = list(filter(lambda x: x[3] - x[2] >= min_len, merged_rgns))
+    logger.debug(f"window {win_id}: filter_rgns finished")
 
     # get motif and sequence, transform coordinates to 1-based global coordinates
     rgns_with_motif_and_seq: List[RegionWithMotifAndSeq] = get_motif_and_seq(final_rgns, win)
+    logger.debug(f"window {win_id}: get_motif_and_seq finished")
 
     # write polished regions to file
-    output_filepath = f"{job_dir}/polished_rgns/window_{window_id}.tsv"
+    output_filepath = f"{job_dir}/polished_rgns/window_{win_id}.tsv"
     with open(output_filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t', lineterminator='\n')
         writer.writerows(rgns_with_motif_and_seq)
+
+    logger.debug(f"window {win_id}: call_region finished")
 
     return output_filepath
 
@@ -204,43 +213,6 @@ def get_largest_confident_period_by_k(k: int, alpha: float = 0.1) -> int:
     """
     threshold = int(4 ** k * alpha)
     return threshold
-
-
-@numba.jit(nopython=True)
-def calculate_distance_ARCHIEVED(seq: str, ksize: int = 17, max_dist: int = 10000) -> np.ndarray:
-    """
-    Calculate the distance of the given sequence
-    Input:
-        seq: str
-        ksize: int
-        max_dist: int, maximum distance to record, use np.nan if exceeding
-    Output:
-        np.ndarray: the distance array, dtype=np.float32 with np.nan for missing values
-    """
-    n_positions = len(seq) - ksize + 1
-    if n_positions <= 0:
-        return np.full(0, np.nan, dtype=np.float32)
-    
-    distances = np.full(n_positions, np.nan, dtype=np.float32)
-    # use a fixed size hash table
-    max_kmers = min(n_positions // 5, 4 ** ksize + 10)
-    hash_table = np.full(max_kmers, -1, dtype=np.int32)
-    
-    for i in range(n_positions):
-        # compute the simple hash of the kmer
-        kmer_hash = 0
-        for j in range(ksize):
-            kmer_hash = (kmer_hash * 31 + ord(seq[i + j])) % max_kmers
-        
-        la_pos = hash_table[kmer_hash]
-        if la_pos != -1:
-            dist = i - la_pos
-            if dist < max_dist:
-                distances[i] = dist
-        hash_table[kmer_hash] = i
-
-    return distances
-
 
 @numba.jit(nopython=True)
 def calculate_distance(seq: str, ksize: int = 17, max_dist: int = 10000) -> np.ndarray:
@@ -583,8 +555,6 @@ def call_raw_rgns(
         # filter raw regions with too short length but too long period
         raw_rgns.extend([rgn for rgn in chained_rgns if rgn[3] - rgn[2] > rgn[6][0] / 10.0])
 
-        ###raw_rgns.extend([rgn for rgn in piece_rgns if rgn[3] - rgn[2] > rgn[6][0] / 10.0])
-
     return raw_rgns
 
 # Step 2: merge overlapped regions
@@ -914,9 +884,7 @@ def extend_border(seq: str, motif: str, have_downstream: bool, min_score_to_link
     motif_rep = motif * (seq_len // motif_len + 1)
     results = make_semi_global_alignment(motif_rep, seq)
 
-    # if there is no cost to link 2 regions (no gap), return the end position of the sequence
-    logger.debug(f"have_downstream = {have_downstream} score = {results['score']}")
-    
+    # if there is no cost to link 2 regions (no gap), return the end position of the sequence   
     if have_downstream and results["score"] >= min_score_to_link:
         return seq_len
 
@@ -1623,6 +1591,10 @@ def run_scan(args: argparse.Namespace) -> None:
         msg = f"Match score, mismatch penalty, gap open penalty, and gap extend penalty must be non-negative integers"
         logger.error(f"ERROR: {msg}")
         raise ValueError(msg)
+    if cfg["seq_win_size"] <= cfg["seq_ovlp_size"]:
+        msg = f"Sequence window size must be greater than overlap size"
+        logger.error(f"ERROR: {msg}")
+        raise ValueError(msg)
     
     global GLOBAL_MATRIX
     GLOBAL_MATRIX = parasail.matrix_create("ACGT", MATCH_SCORE, -MISMATCH_PENALTY)
@@ -1731,10 +1703,7 @@ def run_scan(args: argparse.Namespace) -> None:
         logger.info(f"Skipping report generation")
 
     # remove temporary files
-    if cfg["debug"]:
-        os.remove(JOB_DIR)
+    if not cfg["debug"]:
+        shutil.rmtree(JOB_DIR)
 
-    logger.info(f"Bye.")
-
-if __name__ == "__main__":
-    scan()
+    logger.info("Bye.")
