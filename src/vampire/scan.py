@@ -1,21 +1,17 @@
 #! /usr/bin/env python3
 
-# argument parsing 
-import argparse
 # data processing
-import math
 import numpy as np
 import polars as pl
 from Bio import SeqRecord, SeqIO
 from Bio.Seq import Seq
-from collections import Counter
+from collections import Counter, defaultdict
 from numpy.lib.stride_tricks import sliding_window_view  # rolling median
 # multiprocessing
 from tqdm import tqdm
 from multiprocessing import Pool
 # type hints
 from typing import List, Dict, Tuple, Any, Optional
-from dataclasses import dataclass, asdict
 # basic packages for file operations, logging
 import os
 import re
@@ -28,14 +24,11 @@ import shutil
 from pathlib import Path
 # numba packages for speed optimization
 import numba
-from numba import jit
 # seqeunce alignment packages
 import edlib
 import parasail
 
-from vampire.stats_utils import ops_to_cigar, get_copy_number, calculate_alignment_metrics, calculate_nucleotide_composition
-# debugging
-import cProfile
+from vampire._report_utils import ops_to_cigar, get_copy_number, calculate_alignment_metrics, calculate_nucleotide_composition
 
 # type definitions
 Region = List[Any] # [win_id, chrom, start, end, ksizes, score, periods] : [int, str, int, int, List[int], float, List[int]]
@@ -77,16 +70,19 @@ def split_fasta_by_window(fasta: list[SeqRecord], seq_win_size: int, seq_ovlp_si
     window_filepaths: List[str] = []
     window_num = 0
     for record in fasta:
-        logger.debug(f"Splitting record: {record.id}, window starts: {",".join([f"{i}-{i + seq_win_size}" for i in range(0, len(record.seq), seq_win_size - seq_ovlp_size)])}")
-        for i in range(0, len(record.seq), seq_win_size - seq_ovlp_size):
-            window = str(record.seq[i : i + seq_win_size]).upper()
+        if logger.isEnabledFor(logging.DEBUG):
+            windows = ",".join(f"{i}-{i + seq_win_size}" for i in range(0, len(record.seq), seq_win_size - seq_ovlp_size))
+            logger.debug(f"Splitting record: {record.id}, windows: {windows}")
+        seq = str(record.seq).upper()
+        for i in range(0, len(seq), seq_win_size - seq_ovlp_size):
+            window = seq[i : i + seq_win_size]
             if i != 0 and len(window) < seq_ovlp_size:
-                continue
+                break
 
             output_filepath = f"{job_dir}/windows/window_{window_num + 1}.tsv"
             with open(output_filepath, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter='\t', lineterminator='\n')
-                writer.writerow([window_num + 1, record.id, i, min(i+seq_win_size, len(record.seq)), window])
+                writer.writerow([window_num + 1, record.id, i, min(i+seq_win_size, len(seq)), window])
             window_filepaths.append(output_filepath)
             window_num += 1
             
@@ -99,7 +95,7 @@ def split_fasta_by_window(fasta: list[SeqRecord], seq_win_size: int, seq_ovlp_si
 #
 """
 # main entry
-def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> str:
+def call_regions(task: Tuple[str, str, List[int], int, int, int]) -> str:
     """
     Call the nonoverlapped tandem repeat regions for the given sequence
     Input:
@@ -110,12 +106,11 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
             max_dist: int, maximum distance to call regions
             score_vision_size: int, window length to compute smoothness score
             min_smoothness: int, minimum smoothness score to call regions
-            min_len: int, minimum length of the alignment to call regions
     Output:
         result: str, raw region file path, the format is:
             List[window_id, chrom, start, end, k, score, period], start and end are 1-based and include the borders
     """
-    job_dir, window_filepath, ksizes, max_dist, score_vision_size, min_smoothness, min_len, composite = task
+    job_dir, window_filepath, ksizes, max_dist, score_vision_size, min_smoothness = task
     # read window information
     csv.field_size_limit(1024 * 1024 * 1024)  # set as 1 GB to avoid overflow
     with open(window_filepath, 'r', newline='', encoding='utf-8') as f:
@@ -126,8 +121,10 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
     win = (win_id, chrom, win_start, win_end, seq)
 
     # call raw regions
+    t1 = time.time() # TODO: TO REMOVE
     raw_rgns: List[Region] = call_raw_rgns(job_dir, win, ksizes, max_dist, score_vision_size, min_smoothness)
-    logger.debug(f"window {win_id}: call_raw_rgns finished")
+    t2 = time.time() # TODO: TO REMOVE
+    logger.debug(f"window {win_id}: call_raw_rgns finished, time: {t2 - t1}")
     
     # if no raw regions found, return empty list
     if not raw_rgns:
@@ -153,10 +150,13 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
     with open(output_filepath, 'w', newline='', encoding='utf-8') as fi:
         writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
         writer.writerows(merged_rgns)
+    logger.debug(f"window {win_id}: write_raw_rgns finished")
 
     # polish region borders
-    polished_rgns: List[Region] = polish_rgns(merged_rgns, win, composite)
-    logger.debug(f"window {win_id}: polish_rgns finished")
+    t1 = time.time() # TODO: TO REMOVE
+    polished_rgns: List[Region] = polish_rgns(merged_rgns, win)
+    t2 = time.time() # TODO: TO REMOVE
+    logger.debug(f"window {win_id}: polish_rgns finished, time: {t2 - t1}")
 
     # sort by coordinates
     polished_rgns.sort(key=lambda x: (x[2], -x[3]))
@@ -166,12 +166,22 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
     logger.debug(f"window {win_id}: merge_rgns finished")
 
     # filter polished regions that are too short
-    final_rgns: List[Region] = list(filter(lambda x: x[3] - x[2] >= min_len, merged_rgns))
-    logger.debug(f"window {win_id}: filter_rgns finished")
+    final_rgns: List[Region] = list(filter(lambda x: x[3] - x[2] >= MIN_LEN, merged_rgns))
+    logger.debug(f"window {win_id}: filter_rgns finished, total {len(final_rgns)} regions left")
+
+    # remove concatemer motifs
+    final_rgns = remove_concatemer(final_rgns, seq)
+    logger.debug(f"window {win_id}: polished regions remove_concatemer finished")
+    """
+    for rgn in final_rgns:
+        print(f"final region: {rgn}")
+    #""" # TODO
 
     # get motif and sequence, transform coordinates to 1-based global coordinates
+    t1 = time.time() # TODO: TO REMOVE
     rgns_with_motif_and_seq: List[RegionWithMotifAndSeq] = get_motif_and_seq(final_rgns, win)
-    logger.debug(f"window {win_id}: get_motif_and_seq finished")
+    t2 = time.time() # TODO: TO REMOVE
+    logger.debug(f"window {win_id}: get_motif_and_seq finished, time: {t2 - t1}")
 
     # write polished regions to file
     output_filepath = f"{job_dir}/polished_rgns/window_{win_id}.tsv"
@@ -185,23 +195,24 @@ def call_regions(task: Tuple[str, str, List[int], int, int, int, int, bool]) -> 
 
 def get_mode(nums: List[int]) -> int|None:
     """
-    Get mode from a list of elements
+    Get mode from a list of elements using numpy
     Input:
         nums: List[int]
     Output:
         mode: int|None, return None if no mode is found
     """
-    if len(nums) == 0:
-        return None
-    if len(nums) == 1:
-        return nums[0]
-    # get mode
-    counts = Counter(nums)
-    max_freq = max(counts.values())
-    candidates = [x for x, c in counts.items() if c == max_freq]
-    return min(candidates)
+    match len(nums):
+        case 0:
+            return None
+        case 1:
+            return nums[0]
+        case _:
+            nums = np.asarray(nums, dtype=np.int64)
+            vals, counts = np.unique(nums, return_counts=True)
+            max_freq = counts.max()
+            return int(vals[counts == max_freq][0])
 
-@numba.jit(nopython=True)
+@numba.njit(cache=True)
 def get_largest_confident_period_by_k(k: int, alpha: float = 0.1) -> int:
     """
     Get the largest confident period by k-mer
@@ -214,65 +225,71 @@ def get_largest_confident_period_by_k(k: int, alpha: float = 0.1) -> int:
     threshold = int(4 ** k * alpha)
     return threshold
 
-@numba.jit(nopython=True)
-def calculate_distance(seq: str, ksize: int = 17, max_dist: int = 10000) -> np.ndarray:
+@numba.njit(cache=True)
+def calculate_distance(encoded_seq: np.ndarray, ksize: int = 17, max_dist: int = 10000) -> np.ndarray:
     """
     Calculate the distance of the given sequence
     Input:
-        seq: str
+        encoded_seq: np.ndarray, the encoded sequence, use encode_seq() to encode the sequence, A=0, C=1, G=2, T=3, N=-1
         ksize: int
         max_dist: int, maximum distance to record, use np.nan if exceeding
     Output:
         np.ndarray: the distance array, dtype=np.float32 with np.nan for missing values
     """
-    n = len(seq)
+    n = len(encoded_seq)
     n_positions = n - ksize + 1
     if n_positions <= 0:
         return np.full(0, np.nan, dtype=np.float32)
     
     distances = np.full(n_positions, np.nan, dtype=np.float32)
-    table_size = 1 << 20 
+    table_size = 1 << 20 if ksize > 10 else 1 << (2 * ksize)
     mask = table_size - 1
     
-    last_pos_table = np.full(table_size, -1, dtype=np.int32)
+    prev_pos_table = np.full(table_size, -1, dtype=np.int32)
     # tag_table stores the complete 64-bit encoding, used to resolve conflicts (only encoding consistent is the same k-mer)
     tag_table = np.full(table_size, -1, dtype=np.int64)
 
-    # DNA 2-bit mapping table (A, C, G, T corresponding to ASCII 65, 67, 71, 84)
-    # simple mapping: (base >> 1) & 3 
     current_encoding = np.int64(0)
     bit_mask = (np.int64(1) << (2 * ksize)) - 1
 
     # preheat the first window
+    n_count = 0
     for i in range(ksize):
-        val = (ord(seq[i]) >> 1) & 3
-        current_encoding = (current_encoding << 2) | val
+        val = encoded_seq[i]
+        if val == -1:
+            n_count += 1
+        current_encoding = (current_encoding << 2) | max(val, 0) # if current base is N, add 00 to the encoding
 
+    # sliding window
     for i in range(n_positions):
-        # calculate the hash index of the current encoding (modulo or bitwise operation)
-        # use a simple perturbation function to reduce conflicts
-        h = (current_encoding ^ (current_encoding >> 16)) & mask
-        
-        # conflict check
-        if tag_table[h] == current_encoding:
-            # it is the same k-mer
-            la_pos = last_pos_table[h]
-            dist = i - la_pos
-            if dist < max_dist:
-                distances[i] = dist
-        
-        # update the table
-        tag_table[h] = current_encoding
-        last_pos_table[h] = i
+        if n_count == 0:
+            h = (current_encoding ^ (current_encoding >> 16)) & mask
 
-        # rolling update the encoding (move to the next position)
+            if tag_table[h] == current_encoding:
+                prev_pos = prev_pos_table[h]
+                dist = i - prev_pos
+                if dist < max_dist:
+                    distances[i] = dist
+
+            tag_table[h] = current_encoding
+            prev_pos_table[h] = i
+        else:
+            distances[i] = np.nan
+        # rolling update
         if i + ksize < n:
-            val = (ord(seq[i + ksize]) >> 1) & 3
-            current_encoding = ((current_encoding << 2) | val) & bit_mask
+            old_val = encoded_seq[i]
+            new_val = encoded_seq[i + ksize]
+            # update n_count
+            if old_val == -1:
+                n_count -= 1
+            if new_val == -1:
+                n_count += 1
+            # update encoding
+            current_encoding = ((current_encoding << 2) | max(new_val, 0)) & bit_mask
 
     return distances
 
-@numba.jit(nopython=True)
+@numba.njit(cache=True)
 def is_low_complexity_kmer(kmer: str) -> bool:
     """
     Heuristics to filter low-complexity / uninformative k-mers.
@@ -302,11 +319,158 @@ def is_low_complexity_kmer(kmer: str) -> bool:
 
     return False
 
+def find_dominant_kmer(seq: str, ksize: int) -> str | None:
+    """
+    Find the most frequent (dominant) k-mer in a sequence,
+    skipping low-complexity k-mers when applicable.
+    Input:
+        seq: str
+        k: int
+    Output:
+        dominant_kmer: str | None
+    """
+    VALID_BASES = {"A", "C", "G", "T"}
+    encoded_seq = encode_seq(seq)
+
+    counts = defaultdict(int)
+    best_kmer = None
+    best_count = 0
+
+    for i in range(len(seq) - ksize + 1):
+        window = encoded_seq[i : i + ksize]
+        if np.any(window == -1):  # rapidly check for invalid bases
+            continue
+        kmer = seq[i : i + ksize]
+
+        cnt = counts[kmer] + 1
+        counts[kmer] = cnt
+
+        if cnt > best_count and not is_low_complexity_kmer(kmer):
+            best_kmer = kmer
+            best_count = cnt
+
+    # fallback：if all k-mers are low-complexity, return the most frequent k-mer
+    if best_kmer is None and counts:
+        best_kmer = max(counts.items(), key=lambda x: x[1])[0]
+
+    return best_kmer
+
+def is_low_complexity_kmer_int(kmer_int: int, k: int, cache: dict) -> bool:
+    if kmer_int in cache:
+        return cache[kmer_int]
+    seen = set()
+    tmp = kmer_int
+    for _ in range(k):
+        seen.add(tmp & 0b11)
+        tmp >>= 2
+        if len(seen) > 2:
+            cache[kmer_int] = False
+            return False
+    cache[kmer_int] = True
+    return True
+
+def find_dominant_kmer_int(encoded_seq: np.ndarray, ksize: int) -> int | None:
+    """
+
+    """
+    n = len(encoded_seq)
+    n_positions = n - ksize + 1
+    if n_positions <= 0:
+        return None
+    
+    counts = defaultdict(int)
+    best_kmer_int = None
+    best_count = 0
+    low_complex_cache = {}
+
+    mask = (1 << (2 * ksize)) - 1
+    kmer_int = 0
+    valid_bases = 0
+
+    for i, b in enumerate(encoded_seq):
+        if b == -1:
+            valid_bases = 0
+            kmer_int = 0
+            continue
+        kmer_int = ((kmer_int << 2) | int(b)) & mask
+        valid_bases += 1
+        if valid_bases < ksize:
+            continue
+
+        cnt = counts[kmer_int] + 1
+        counts[kmer_int] = cnt
+
+        if cnt > best_count and not is_low_complexity_kmer_int(kmer_int, ksize, low_complex_cache):
+            best_kmer_int = kmer_int
+            best_count = cnt
+
+    # fallback
+    if best_kmer_int is None and counts:
+        best_kmer_int = max(counts.items(), key=lambda x: x[1])[0]
+
+    if best_kmer_int is None:
+        return None
+    return best_kmer_int
+
+@numba.njit(cache=True)
+def count_kmers(encoded_seq: np.ndarray, ksize: int) -> Tuple[int, int]:
+    """
+    Count the k-mers in the encoded sequence, skip counting if N or other invalid characters are found
+    Input:
+        encoded: np.ndarray, the encoded sequence, A=0, C=1, G=2, T=3, N and other invalid characters are encoded as -1
+        ksize: int, the length of the k-mer
+    Output:
+        Tuple[int, int]: the most frequent k-mer and its count, return -1 and 0 if no valid k-mer is found
+    """
+    n = len(encoded_seq)
+    n_positions = n - ksize + 1
+    if n_positions <= 0:
+        return -1, 0
+
+    table_size = 1 << 20 if ksize > 10 else 1 << (2 * ksize)
+    mask = table_size - 1
+    counts = np.zeros(table_size, dtype=np.int32)
+
+    current_encoding = np.int64(0)
+    bit_mask = (np.int64(1) << (2 * ksize)) - 1
+
+    # preheat the first window
+    n_count = 0
+    for i in range(ksize):
+        val = encoded_seq[i]
+        if val == -1:
+            n_count += 1
+        current_encoding = (current_encoding << 2) | max(val, 0) # if current base is N, add 00 to the encoding
+
+    for i in range(n_positions):
+        # skip count if N or other invalid characters are found
+        if n_count == 0:
+            h = (current_encoding ^ (current_encoding >> 16)) & mask
+            counts[h] += 1
+        # rolling update
+        if i + ksize < n:
+            old_val = encoded_seq[i]
+            new_val = encoded_seq[i + ksize]
+            # update n_count
+            if old_val == -1:
+                n_count -= 1
+            if new_val == -1:
+                n_count += 1
+            # update encoding
+            current_encoding = ((current_encoding << 2) | max(new_val, 0)) & bit_mask
+
+    max_count = 0
+    max_encoding = 0
+    for encoding in range(table_size):
+        if counts[encoding] > max_count:
+            max_count = counts[encoding]
+            max_encoding = encoding
+
+    return max_encoding, max_count
 
 def get_most_frequent_kmer(seq: str, k: int) -> str | None:
     """
-    Get the most frequent k-mer in the sequence (optimized version)
-    Uses sliding window counting to avoid creating all substrings
+    Get the most frequent k-mer in the sequence
     Input:
         seq: str
         k: int
@@ -315,27 +479,23 @@ def get_most_frequent_kmer(seq: str, k: int) -> str | None:
     """
     if len(seq) < k:
         return None
-    
-    kmer_counts = Counter()
-    for i in range(len(seq) - k + 1):
-        kmer = seq[i:i+k]
-        kmer_counts[kmer] += 1
-    
-    if not kmer_counts:
-        return None
-    
-    # sort by counts
-    sorted_kmer_counts = sorted(kmer_counts.items(), key=lambda x: x[1], reverse=True)
-    # filter out low-complexity kmers
-    for kmer, count in sorted_kmer_counts:
-        if k > 1 and k < 50 and is_low_complexity_kmer(kmer):
-            continue
-        return kmer
+    if k <= 0:
+        encoded_seq = encode_seq(seq)
+        kmer_val, _ = count_kmers(encoded_seq, k)
+        if kmer_val == -1:
+            return None
+        kmer = decode_kmer(kmer_val, k)
+    else:
+        encoded_seq = encode_seq(seq)
+        kmer_val = find_dominant_kmer_int(encoded_seq, k)
+        if kmer_val is None:
+            return None
+        kmer = decode_kmer(kmer_val, k)
 
-    # no valid k-mer found
-    return sorted_kmer_counts[0][0]
 
-@numba.jit(nopython=True)
+    return kmer
+
+@numba.njit(cache=True)
 def split_regions_by_rolling_median(starts: np.ndarray, ends: np.ndarray, 
                                      rolling_median: np.ndarray, 
                                      max_output_size: int) -> Tuple[np.ndarray, np.ndarray, int]:
@@ -393,7 +553,7 @@ def split_regions_by_rolling_median(starts: np.ndarray, ends: np.ndarray,
     
     return new_starts, new_ends, count
 
-@numba.jit(nopython=True)
+@numba.njit(cache=True)
 def is_possible_concatemer(period1: int, period2: int, threshold: float = 0.2) -> bool:
     """
     Check if period1 is a possible concatemer of period2
@@ -434,12 +594,13 @@ def call_raw_rgns(
     """
     raw_rgns: List[Region] = []
     win_id, chrom, win_start, win_end, seq = win
+    encoded_seq = encode_seq(seq)
     for ksize in ksizes:
         piece_rgns: List[Region] = []
         largest_confident_period = get_largest_confident_period_by_k(ksize)
 
         # calculate distance
-        dist = calculate_distance(seq, ksize, min(largest_confident_period, max_dist))
+        dist = calculate_distance(encoded_seq, ksize, min(largest_confident_period, max_dist))
         log_dist = np.log(dist) # distance >= 1
 
         # calculate smoothness score using rolling window
@@ -492,7 +653,7 @@ def call_raw_rgns(
                 starts, ends, rolling_median, max_output_size
             )
             if count == max_output_size:
-                print(f"Warning: max_output_size is too small, increasing to {max_output_size * 100}")
+                logger.warning(f"max_output_size is too small, increasing to {max_output_size * 100}")
                 max_output_size = max(len(starts) * 100, 100)
                 new_starts_arr, new_ends_arr, count = split_regions_by_rolling_median(
                     starts, ends, rolling_median, max_output_size
@@ -575,15 +736,16 @@ def merge_rgns(rgns: List[Region], include_offset: bool = False) -> List[Region]
             
         last_rgn = merged_rgns[-1]
         # check overlap or containment
-        is_motif_len_equal = (get_mode(last_rgn[6]) == get_mode(rgn[6]))
+        ###is_motif_len_equal = (get_mode(last_rgn[6]) == get_mode(rgn[6]))
+        is_motif_len_equal = bool(set(last_rgn[6]) & set(rgn[6]))
         is_overlapped = (rgn[2] - rgn[6][0] < last_rgn[3]) if include_offset else (rgn[2] < last_rgn[3])
         is_contained = (rgn[2] >= last_rgn[2]) and (rgn[3] <= last_rgn[3])
-        if is_contained or (is_overlapped and is_motif_len_equal):  # overlapped and have same period (cancelled)
+        if is_contained or (is_overlapped and is_motif_len_equal):  # overlapped and have same period
             merged_start = min(last_rgn[2], rgn[2])
             merged_end = max(last_rgn[3], rgn[3])
-            merged_ksize = last_rgn[4] + rgn[4]      # merge ksize lists
+            merged_ksize = sorted(list(set(last_rgn[4] + rgn[4])))      # merge ksize lists
             merged_score = max(last_rgn[5], rgn[5])  # keep the max score
-            merged_period = last_rgn[6] + rgn[6]     # merge period lists
+            merged_period = sorted(list(set(last_rgn[6] + rgn[6])))     # merge period lists
             merged_rgns[-1] = [
                 last_rgn[0],
                 last_rgn[1],
@@ -616,6 +778,7 @@ def remove_concatemer(rgns: List[Region], seq: str) -> List[Region]:
         collapsed = {p: p for p in period_dedup}
         # Cache motifs to avoid repeated get_most_frequent_kmer calls
         motif_cache = {}
+        included_seq = seq[rgn[2] : rgn[3]] # max(0, rgn[2] - period_dedup[i])
         
         for i in range(len(period_dedup)): # longer motif
             # Early exit if already collapsed
@@ -623,14 +786,15 @@ def remove_concatemer(rgns: List[Region], seq: str) -> List[Region]:
                 continue
                 
             for j in range(len(period_dedup) - 1, i, -1): # shorter motif
-                if period_dedup[j] == 1:
-                    continue
+                ### logger.debug(f"-----trying to collapse {period_dedup[i]} and {period_dedup[j]}") # TODO
+                ###if period_dedup[j] == 1:
+                ###    continue
                 if not is_possible_concatemer(period_dedup[i], period_dedup[j]):
                     continue
                 
                 # Get or compute motifs with caching (use original seq slicing logic)
                 if period_dedup[i] not in motif_cache:
-                    motif_i = get_most_frequent_kmer(seq[max(0, rgn[2] - period_dedup[i]) : rgn[3]], period_dedup[i])
+                    motif_i = get_most_frequent_kmer(included_seq, period_dedup[i])
                     if motif_i is None:
                         break
                     motif_cache[period_dedup[i]] = motif_i
@@ -638,7 +802,7 @@ def remove_concatemer(rgns: List[Region], seq: str) -> List[Region]:
                     motif_i = motif_cache[period_dedup[i]]
                 
                 if period_dedup[j] not in motif_cache:
-                    motif_j = get_most_frequent_kmer(seq[max(0, rgn[2] - period_dedup[j]) : rgn[3]], period_dedup[j])
+                    motif_j = get_most_frequent_kmer(included_seq, period_dedup[j])
                     if motif_j is None:
                         continue
                     motif_cache[period_dedup[j]] = motif_j
@@ -646,34 +810,45 @@ def remove_concatemer(rgns: List[Region], seq: str) -> List[Region]:
                     motif_j = motif_cache[period_dedup[j]]
                 
                 # Build repeated motif_j
-                motif_j_rep = motif_j * (period_dedup[i] // period_dedup[j])
-                motif_j_rep += motif_j[: (period_dedup[i] % period_dedup[j])]
+                target_len = 2 * period_dedup[i]
+                unit_len = len(motif_j)
+                repeat = target_len // unit_len
+                remain = target_len % unit_len
+                motif_j_rep = motif_j * repeat + motif_j[:remain]
                 
-                results = edlib.align(motif_i, motif_j_rep, mode="SHW", task="distance")
-                if results is not None and results["editDistance"] <= 0.2 * period_dedup[i]:
+                results = edlib.align(motif_i, motif_j_rep, mode="HW", task="distance")
+                if results is not None and results["editDistance"] <= 0 * period_dedup[i]: # TODO 0.4 0.2  # now exact same match
                     collapsed[period_dedup[i]] = period_dedup[j]
                     break
-        collapsed_period = [collapsed[p] for p in rgn[6]]
-        rgns[idx][6] = collapsed_period
+                """
+                if j == len(period_dedup) - 1 or j == len(period_dedup) - 2:
+                    print(f"failed to collapse {period_dedup[i]} to {period_dedup[j]}")
+                    print(f"motif_i: {motif_i}, motif_j: {motif_j}, motif_j_rep: {motif_j_rep}")
+                    print(f"results: {results}")
+                #""" # TODO
+        collapsed_period = [p for p in collapsed.keys() if p == collapsed[p]]
+        ### print(f"collapsed: {collapsed}") # TODO
+        ### print(f"original period: {rgn[6]}") # TODO
+        rgns[idx][6] = sorted(list(set(collapsed_period)))
+        ### print(f"collapsed period: {rgns[idx][6]}") # TODO
     return rgns
 
 # Step 4: polish borders
-def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str,], composite: bool) -> List[Region]: # TODO
+def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str]) -> List[Region]:
     """
     Annotate the candidates with more accurate period using edlib
     Input:
         rgns: List[window_id, chrom, start, end, k, score, period]
         win: Tuple[int, str, int, int, str], win_id, chrom, start, end, seq
-        composite: bool, whether to include composite tandem repeats
     Output:
         annotated_candidates: List[window_id, chrom, start, end, k, score, period]
     """
-    scorescore_list = [] # TODO: TO REMOVE
     win_id, chrom, win_start, win_end, seq = win
     seq_len = len(seq)
-    max_context_len = 1000   # the maximum length of the context
+    max_context_len = 5000   # the maximum length of the context
 
     ref_motifs: List[str] = []
+    t1 = time.time() # TODO: TO REMOVE
     for rgn in rgns:
         best_period = get_mode(rgn[6])
         included_end = rgn[3] + 1
@@ -682,33 +857,33 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str,], compos
         ref_motif = get_most_frequent_kmer(included_seq, best_period)
         ref_motifs.append(ref_motif)
     
+    t2 = time.time() # TODO: TO REMOVE
+    logger.debug(f"get motif time: {t2 - t1}")
+
     idx = 0
     polished_rgns: List[Region] = []
     cur_start, cur_end, cur_period = None, None, []
-    t1, t2 = 0, 0 # TO REMOVE
+    t1 = time.time() # TODO: TO REMOVE
     while idx < len(rgns):
         # get basic information
         rgn = rgns[idx]
         next_rgn = rgns[idx + 1] if idx + 1 < len(rgns) else None
-
-        """
-        if next_rgn is not None and next_rgn[2] < rgn[3]:
-            print(f"next_rgn[2] = {next_rgn[2]}, rgn[3] = {rgn[3]}")
-            print(f"next_rgn = {next_rgn}, rgn = {rgn}")
-            print(f"next_rgn motif length = {len(ref_motifs[idx + 1])}, rgn motif length = {len(ref_motifs[idx])}")
-        """
         
         best_period = get_mode(cur_period + rgn[6])
-        extend_len = best_period * 5
+        extend_len = min(best_period * 500, 5000) # TODO: * 5 -> * 500
         init_len = best_period * 1
 
         # polish start
         is_added_period = False
         if cur_start is None:
             ref_motif = ref_motifs[idx]
-            extend_start = max(0, rgn[2] - extend_len)
-            extend_end = rgn[2]
-            best_start_offset = extend_border(seq[extend_start : extend_end][::-1], ref_motif[::-1], False)
+            if ref_motif is None:
+                logger.warning(f"ref_motif is None for start polishing! region {rgn[1]}:{rgn[2]}-{rgn[3]}")
+                best_start_offset = 0
+            else:
+                extend_start = max(0, rgn[2] - extend_len)
+                extend_end = rgn[2]
+                best_start_offset = extend_border(seq[extend_start : extend_end][::-1], ref_motif[::-1], False)
             cur_start = max(0, rgn[2] - best_start_offset)
             cur_period.extend(rgn[6])
             is_added_period = True
@@ -724,21 +899,18 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str,], compos
             included_seq = seq[cur_start : rgn[3] + 1 + init_len]
             ref_motif = get_most_frequent_kmer(included_seq, best_period)
             if ref_motif is None:
-                print(f"ref_motif is None! included_seq = {included_seq}, best_period = {best_period} for region {rgn[1]}:{rgn[2]}-{rgn[3]}")
-                print(f"cur_start = {cur_start}, rgn[3] = {rgn[3]}")
-                print(f"seq = {seq[cur_start : rgn[3] + 1]}")
-                print(f"seq_len = {len(seq)}")
-                print(f"best_period = {best_period}")
-                print(f"init_len = {init_len}")
-                print(f"included_seq_len = {len(included_seq)}")
-                print(f"included_seq = {included_seq}")
+                logger.warning(f"ref_motif is None! included_seq = {included_seq}, best_period = {best_period} for region {rgn[1]}:{rgn[2]}-{rgn[3]}")
         else:
             t2 += 1
         
         # the last region
         if next_rgn is None:
             end_seq = seq[rgn[3] + 1 : min(rgn[3] + 1 + extend_len, seq_len)]
-            best_end_offset = extend_border(end_seq, ref_motif, False, 0)
+            if ref_motif is None:
+                logger.warning(f"ref_motif is None for end polishing (last region)! region {rgn[1]}:{rgn[2]}-{rgn[3]}")
+                best_end_offset = 0
+            else:
+                best_end_offset = extend_border(end_seq, ref_motif, False, 0)
             cur_end = rgn[3] + best_end_offset
             polished_rgns.append([win_id, chrom, cur_start, cur_end, rgn[4], rgn[5], cur_period])
             cur_start, cur_end, cur_period = None, None, []
@@ -746,13 +918,13 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str,], compos
             continue
         
         # not the last region
-        if composite:
-            # only consider the coordinates of the next region
-            have_downstream = True if next_rgn[2] - rgn[3] <= max_context_len else False
-            extend_end = next_rgn[2] if have_downstream else rgn[3] + 1 + extend_len
-        else:
-            # consider the coordinates and the motif similarity of the next region
-            if next_rgn[2] - rgn[3] <= max_context_len:
+        # consider the coordinates and the motif similarity of the next region
+        if next_rgn[2] - rgn[3] <= max_context_len:
+            ### logger.debug(f"trying to link the region {rgn[1]}:{rgn[2]}-{rgn[3]} and {next_rgn[1]}:{next_rgn[2]}-{next_rgn[3]}") # TODO
+            if ref_motif is None or ref_motifs[idx + 1] is None:
+                ###logger.debug(f"ref_motif is None for end polishing! region {rgn[1]}:{rgn[2]}-{rgn[3]}") # TODO
+                have_downstream = False
+            else:
                 short_motif, long_motif = ref_motif, ref_motifs[idx + 1]
                 short_len, long_len = len(short_motif), len(long_motif)
                 if short_len > long_len:
@@ -761,92 +933,37 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, str,], compos
                 
                 short_motif_rep = short_motif * (long_len // short_len)
                 short_motif_rep = short_motif_rep + short_motif_rep[:-1]
-                result = edlib.align(long_motif, short_motif_rep, mode="HW", task="path")
-                is_highly_similar = (result is not None) and (result["editDistance"] <= 0.40 * long_len)
+                result = edlib.align(long_motif, short_motif_rep, mode="HW", task="distance")
+                is_highly_similar = (result is not None) and (result["editDistance"] <= 0.40 * long_len) # TODO: how to decide the threshold?
                 have_downstream = True if is_highly_similar else False
-            else:
-                have_downstream = False
-            # extend_end = next_rgn[2] + init_len if have_downstream else rgn[3] + 1 + extend_len
-            extend_end = next_rgn[3] if have_downstream else rgn[3] + 1 + extend_len
+                ### logger.debug(f"is_highly_similar: {is_highly_similar}, identity: {1 - result['editDistance'] / long_len}, short_motif: {short_motif}, long_motif: {long_motif}") # TODO
+        else:
+            have_downstream = False
+        # extend_end = next_rgn[2] + init_len if have_downstream else rgn[3] + 1 + extend_len
+        extend_end = next_rgn[3] if have_downstream else rgn[3] + 1 + extend_len
         
         end_seq = seq[rgn[3] + 1 : min(extend_end, seq_len)]
         
-        best_end_offset = extend_border(end_seq, ref_motif, have_downstream, -(rgn[3]-cur_start))
-
-        if False and cur_start >= 215000 and rgn[3] + best_end_offset <= 221000:
-            print(f"start = {cur_start}, end = {rgn[3] + best_end_offset}")
-            print(f"long_motif = {long_motif}, short_motif = {short_motif}")
-            print(f"result = {result}")
-            print(f"is_highly_similar = {is_highly_similar}, have_downstream = {have_downstream}")
-            print(f"end_seq_len = {len(end_seq)}, best_end_offset = {best_end_offset}, have_downstream = {have_downstream}")
-            print("#################################################")
+        if ref_motif is None:
+            logger.warning(f"ref_motif is None for end polishing! region {rgn[1]}:{rgn[2]}-{rgn[3]}")
+            best_end_offset = 0
+        else:
+            best_end_offset = extend_border(end_seq, ref_motif, have_downstream, 0) # TODO old min score is -(rgn[3]-cur_start)
 
         # record region
-        if best_end_offset + rgn[3] < next_rgn[2]:
+        if best_end_offset + rgn[3] <= next_rgn[2]:
             cur_end = rgn[3] + best_end_offset
             polished_rgns.append([win_id, chrom, cur_start, cur_end, rgn[4], rgn[5], cur_period])
             cur_start, cur_end, cur_period = None, None, []
         else:
             if not is_added_period:
-                cur_period.extend(rgn[6]) # old version is: cur_period.extend(next_rgn[6]), i think it is wrong?
+                cur_period.extend(rgn[6]) # TODO old version is: cur_period.extend(next_rgn[6]), i think it is wrong?
         idx += 1
     
-    """
-    print(f"# polished_rgns = {len(polished_rgns)}")
-    print(f"# t1 = {t1}, t2 = {t2}")
-    print(f"########################################")
-    """
+    t2 = time.time() # TODO: TO REMOVE
+    logger.debug(f"polish time: {t2 - t1}")
 
-    # save the scorescore_list
-    """
-    with open(f"scorescore_list_{win_id}.txt", "w") as f:
-        for score in scorescore_list:
-            f.write(f"{score}\n") # TODO: TO REMOVE
-    """
-
-    return polished_rgns # TODO: TO REMOVE
-
-def make_semi_global_alignment(query: str, target: str) -> Dict[str, str|int]:
-    """
-    Semi-global alignment for 3' end extension (free end gaps on right end)
-    Input:
-        query: str - the query sequence (motif)
-        target: str - the target sequence (genomic sequence)
-    Output:
-        dict containing alignment score, CIGAR string, start_pos, end_pos
-        'score': alignment_score,
-        'cigar': cigar_string,
-        'query_start': query_start, 0-based
-        'query_end': query_end, 0-based
-        'target_start': target_start, 0-based
-        'target_end': target_end, 0-based
-    """
-
-    # semi-global alignment with free end gaps on the right end of query and target
-    result = parasail.sg_qe_de_trace_striped_sat(
-        query,                 # query sequence (motif)
-        target,                # target sequence (genomic sequence)
-        GAP_OPEN_PENALTY,      # gap open penalty
-        GAP_EXTEND_PENALTY,    # gap extend penalty
-        GLOBAL_MATRIX          # predefined scoring matrix
-    )
-    
-    alignment_score = result.score
-    cigar_string = result.cigar.decode.decode() if result.cigar else None
-    
-    query_start = result.cigar.beg_query if result.cigar else 0
-    target_start = result.cigar.beg_ref if result.cigar else 0
-    query_end = result.end_query + 1
-    target_end = result.end_ref + 1
-
-    return {
-        'score': alignment_score,
-        'cigar': cigar_string,
-        'query_start': query_start,
-        'query_end': query_end,
-        'target_start': target_start,
-        'target_end': target_end
-    }
+    return polished_rgns
 
 def extend_border(seq: str, motif: str, have_downstream: bool, min_score_to_link: int = 0) -> int:
     """
@@ -881,84 +998,19 @@ def extend_border(seq: str, motif: str, have_downstream: bool, min_score_to_link
             best_motif = motif
         motif = best_motif
 
-    motif_rep = motif * (seq_len // motif_len + 1)
-    results = make_semi_global_alignment(motif_rep, seq)
+    # align
+    score, end_score, _, _, _, end_i, end_j = banded_dp_roll_motif(
+        seq = encode_seq(seq),
+        motif = encode_seq(motif),
+        band_width = MAX_PERIOD,
+        need_end_score = have_downstream
+    )
 
     # if there is no cost to link 2 regions (no gap), return the end position of the sequence   
-    if have_downstream and results["score"] >= min_score_to_link:
+    if have_downstream and end_score >= min_score_to_link:
         return seq_len
 
-    path = results["cigar"]
-
-    # transform the cigar string to a list of tuples
-    cigar_ops = [(int(num), symbol) for num, symbol in re.findall(r'(\d+)([=XIDSM])', path)]
-
-    # curate cigar
-    i = 0
-    cur_query_pos, cur_target_pos = 0, 0
-    while i < len(cigar_ops) - 1:
-        is_swap = False
-        num, symbol = cigar_ops[i]
-        if symbol in ['I','D'] and cigar_ops[i+1][1] in ['=','M']:
-            if num == cigar_ops[i+1][0]:
-                if symbol == 'I':
-                    seq1 = motif_rep[cur_query_pos : cur_query_pos + num]
-                    seq2 = motif_rep[cur_query_pos + num : cur_query_pos + num * 2]     
-                else:
-                    seq1 = seq[cur_target_pos : cur_target_pos + num]
-                    seq2 = seq[cur_target_pos + num : cur_target_pos + num * 2]    
-                if seq1 == seq2:
-                    is_swap = True
-            else:
-                if symbol == 'I':
-                    seq1 = motif_rep[cur_query_pos : cur_query_pos + num]
-                    seq2 = motif_rep[cur_query_pos + num : cur_query_pos + num + cigar_ops[i+1][0]]
-                else:
-                    seq1 = seq[cur_target_pos : cur_target_pos + num]
-                    seq2 = seq[cur_target_pos + num : cur_target_pos + num + cigar_ops[i+1][0]]                    
-                # have to be polyA/T/C/G
-                seq1_dedup = set(seq1)
-                seq2_dedup = set(seq2)
-                if seq1_dedup == seq2_dedup and len(seq1_dedup) == 1:
-                    is_swap = True
-        if is_swap:
-            if symbol != 'D':
-                cur_query_pos += num
-            if symbol != 'I':
-                cur_target_pos += num
-            if cigar_ops[i+1][1] != 'D':
-                cur_query_pos += cigar_ops[i+1][0]
-            if cigar_ops[i+1][1] != 'I':
-                cur_target_pos += cigar_ops[i+1][0]
-            cigar_ops[i], cigar_ops[i+1] = cigar_ops[i+1], cigar_ops[i]    # swap the two operations
-            i += 2
-        else:
-            if symbol != 'D':
-                cur_query_pos += num
-            if symbol != 'I':
-                cur_target_pos += num
-            i += 1
-    
-    cur_query_pos, cur_target_pos = 0, 0
-    best_pos = 0
-    cur_score = 0
-    max_score = 0
-    par = {'M': MATCH_SCORE, '=': MATCH_SCORE, 'X': - MISMATCH_PENALTY, 'I': - GAP_EXTEND_PENALTY, 'D': - GAP_EXTEND_PENALTY}
-    # TODO: if the last few base are mismatch due to mutation, could we add manually?
-    # query is motif_rep, target is seq
-    for i in range(len(cigar_ops)):
-        num, symbol = cigar_ops[i]
-        # ignore the mismatch/indel at the head of the sequence (avoid the shift of the reference motif)
-        if not (cur_query_pos == 0 and symbol in ['I', 'D']):
-            cur_score += num * par[symbol]
-        if symbol != 'D':
-            cur_query_pos += num
-        if symbol != 'I':
-            cur_target_pos += num
-        if cur_score > max_score:
-            max_score = cur_score
-            best_pos = cur_query_pos
-    return best_pos
+    return end_i + 1
 
 def get_motif_and_seq(rgns: List[Region], win: Tuple[int, str, int, int, str]) -> List[RegionWithMotifAndSeq]:
     """
@@ -1087,6 +1139,8 @@ def identify_region_across_windows(results: List[str], seq_win_size: int, seq_ov
     if prev_result:
         with open(prev_result, 'w', newline='', encoding='utf-8') as fi:
             writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
+            if is_prev_chrom_start:
+                writer.writerows(prev_start_rgns)
             writer.writerows(prev_mid_rgns)
             writer.writerows(prev_end_rgns)
     
@@ -1190,84 +1244,108 @@ def annotate_regions(task: Tuple[str, str, str, int]) -> str:
         rgn_dict = {
             "win_id": row[0],
             "chrom": row[1],
-            "start": row[2],
-            "end": row[3],
+            "start": int(row[2]),
+            "end": int(row[3]),
             "ksizes": row[4].translate(str.maketrans("", "", "[] ")),
             "smoothness": row[5],
             "periods": ast.literal_eval(row[6]),
             "sequence": row[7],
-            "motifs": ast.literal_eval(row[8]),
+            "motifs": ast.literal_eval(row[8])
         }
+        if format == "bed":
+            rgn_dict.update({
+                "pseudoScore": 1000,
+                "strand": ".",
+                "start": int(row[2]) - 1,
+                "thickStart": int(row[2]) - 1,
+                "thickEnd": int(row[3]),
+                "itemRgb": ".",
+                "blockCount": 1,
+                "blockSizes": int(row[3]) - int(row[2]),
+                "blockStarts": 0
+            })
         max_score: int = 0
-        best_motif: str = None
-        best_trace_M, best_trace_I, best_trace_D, best_end_i, best_end_j = None, None, None, 0, 0
+        candidates: List[Tuple[int, np.ndarray, np.ndarray, np.ndarray, int, int, str]] = [] # score, trace_M, trace_I, trace_D, end_i, end_j, motif
+        seq_len = len(rgn_dict["sequence"])
         for motif in rgn_dict["motifs"]:
-            score, trace_M, trace_I, trace_D, end_i, end_j = banded_dp_roll_motif(
-                seq = encode_seq(rgn_dict["sequence"].encode("ascii")),
-                motif = encode_seq(motif.encode("ascii")),
-                band_width = 1000 # TODO
+            score, end_score, trace_M, trace_I, trace_D, end_i, end_j = banded_dp_roll_motif(
+                seq = encode_seq(rgn_dict["sequence"]),
+                motif = encode_seq(motif),
+                band_width = MAX_PERIOD,
+                need_end_score = True
             )
+            # TODO have to align to end!!!!!
+            end_i = seq_len - 1
             if score is None:
                 raise RuntimeError(f"Score is None for region {row}")
-            if score > max_score:
-                max_score, best_trace_M, best_trace_I, best_trace_D, best_end_i, best_end_j = score, trace_M, trace_I, trace_D, end_i, end_j
-                best_motif = motif
+            if score >= max_score * SECONDARY_SCORE_RATIO:
+                candidates.append((score, trace_M, trace_I, trace_D, end_i, end_j, motif))
+                max_score = max(max_score, score)
 
-        if best_motif is None: # TODO
-            ### print(f"No best motif found for region {row}")
-            ### print(f"score = {score}, motif = {motif}, end_i = {end_i}, end_j = {end_j}")
-            continue # TODO : TO REMOVE
+        if len(candidates) == 0:
+            ### logger.debug(f"No best motif found for region {row}") # TODO
+            continue
 
         # skip the region if the score is too low
         if max_score < min_score:
-            ### print(f"Score is too low for region {row[:6]}")
-            ### print(f"bast_end_i = {best_end_i}, bast_end_j = {best_end_j}")
-            ### print(f"score = {max_score}, min_score = {min_score}")
+            ### print(f"skip region {row} because max_scorev {max_score} < min_score {min_score}")
             continue
-        
-        # get alignment operations and starting positions
-        # The alignment may not start from the beginning of the motif or sequence
-        # start_i: starting position in seq (1-based DP index, 0 means start from beginning)
-        # start_j: starting position in motif (0-based index, 0 means start from beginning)
-        ops: List[str]
-        start_i: int
-        start_j: int
-        ops, start_i, start_j = traceback_banded_roll_motif(
-            trace_M = best_trace_M,
-            trace_I = best_trace_I,
-            trace_D = best_trace_D,
-            best_i = best_end_i,
-            best_j = best_end_j,
-            m = len(best_motif),
-            seq = rgn_dict["sequence"],
-            motif = best_motif,
-        )
-        
-        # Adjust motif based on starting position
-        if start_j > 0:
-            # Rotate motif so that alignment starts from the beginning
-            adjusted_motif = best_motif[start_j:] + best_motif[:start_j]
-        else:
-            adjusted_motif = best_motif
-        
-        rgn_dict["motif"] = adjusted_motif
-        rgn_dict["period"] = len(adjusted_motif)
-        rgn_dict["consensusSize"] = len(adjusted_motif)
-        rgn_dict["score"] = max_score
 
-        cigar: str = ops_to_cigar(ops, len(adjusted_motif))
-        rgn_dict["cigar"] = cigar
-        rgn_dict["copyNumber"] = get_copy_number(cigar, rgn_dict["period"])
-
-        # calculate nucleotide composition and entropy
-        if format in ["trf", "verbose"]:
-            rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops, len(rgn_dict["sequence"]))
-            nt_comp, entropy = calculate_nucleotide_composition(rgn_dict["sequence"])
-            rgn_dict["A"], rgn_dict["C"], rgn_dict["G"], rgn_dict["T"] = nt_comp["A"], nt_comp["C"], nt_comp["G"], nt_comp["T"]
-            rgn_dict["entropy"] = entropy
+        # filter and sort candidates by score
+        candidates = [candidate for candidate in candidates if candidate[0] >= max_score * SECONDARY_SCORE_RATIO]
+        candidates.sort(key=lambda x: (-x[0], len(x[6])))
+        cur_score = 2 ** 31 - 1
+        for candidate in candidates:
+            score, trace_M, trace_I, trace_D, end_i, end_j, motif = candidate
+            if score == cur_score:
+                continue
+            cur_score = score
+            # get alignment operations and starting positions
+            # The alignment may not start from the beginning of the motif or sequence
+            # start_i: starting position in seq (1-based DP index, 0 means start from beginning)
+            # start_j: starting position in motif (0-based index, 0 means start from beginning)
+            ops: List[str]
+            start_i: int
+            start_j: int
+            ops, start_i, start_j = traceback_banded_roll_motif(
+                trace_M = trace_M,
+                trace_I = trace_I,
+                trace_D = trace_D,
+                best_i = end_i,
+                best_j = end_j,
+                m = len(motif),
+                seq = rgn_dict["sequence"],
+                motif = motif,
+            )
         
-        # add output row
-        output_rows.append([rgn_dict[k] for k in header])
+            # Adjust motif based on starting position
+            if start_j > 0:
+                # Rotate motif so that alignment starts from the beginning
+                adjusted_motif = motif[start_j:] + motif[:start_j]
+            else:
+                adjusted_motif = motif
+
+            # refine motif
+            ### consensus = xxxxxxx()
+        
+            rgn_dict["motif"] = adjusted_motif
+            rgn_dict["period"] = len(adjusted_motif)
+            rgn_dict["consensusSize"] = len(adjusted_motif)
+            rgn_dict["score"] = score
+
+            cigar: str = ops_to_cigar(ops, len(adjusted_motif))
+            rgn_dict["cigar"] = cigar if not SKIP_CIGAR else "."
+            rgn_dict["copyNumber"] = get_copy_number(cigar, rgn_dict["period"])
+
+            # calculate nucleotide composition and entropy
+            if format in ["trf", "bed"]:
+                rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops, len(rgn_dict["sequence"]))
+                nt_comp, entropy = calculate_nucleotide_composition(rgn_dict["sequence"])
+                rgn_dict["A"], rgn_dict["C"], rgn_dict["G"], rgn_dict["T"] = nt_comp["A"], nt_comp["C"], nt_comp["G"], nt_comp["T"]
+                rgn_dict["entropy"] = entropy
+        
+            # add output row
+            output_rows.append([rgn_dict[k] for k in header])
 
     # wrtie resutls
     with open(output_filepath, 'w', newline='', encoding='utf-8') as fo:
@@ -1277,31 +1355,51 @@ def annotate_regions(task: Tuple[str, str, str, int]) -> str:
     
     return output_filepath
 
-@numba.njit(cache=True)
-def encode_seq(s):
-    out = np.empty(len(s), np.int8)
-    for i, c in enumerate(s):
-        if c == 65:      # A
-            out[i] = 0
-        elif c == 67:    # C
-            out[i] = 1
-        elif c == 71:    # G
-            out[i] = 2
-        else:            # T
-            out[i] = 3
-    return out
+def encode_seq(seq: str) -> np.ndarray:
+    """
+    Encode a sequence into an integer array, A=0, C=1, G=2, T=3, N and other invalid characters are encoded as -1
+    Input:
+        seq: str, the sequence to encode
+    Output:
+        np.ndarray, the encoded sequence
+    """
+    table = np.full(256, -1, dtype=np.int8)
+    table[ord('A')] = 0
+    table[ord('C')] = 1
+    table[ord('G')] = 2
+    table[ord('T')] = 3
+    return table[np.frombuffer(seq.encode(), dtype=np.uint8)]
+
+def decode_kmer(val: int, k: int) -> str:
+    """
+    Decode a k-mer from an integer, only for ACGT bases, N and other invalid characters are not supported
+    Input:
+        val: int, the integer to decode
+        k: int, the length of the k-mer
+    Output:
+        str, the decoded k-mer
+    """
+    mapping = "ACGT" # N is not supported
+    chars = []
+    for _ in range(k):
+        chars.append(mapping[val & 3])
+        val >>= 2
+    return ''.join(reversed(chars))
 
 @numba.njit(cache=True)
 def banded_dp_roll_motif(
     seq, motif,
-    band_width
+    band_width,
+    need_end_score = False
 ):
     """
     Inputs:
         seq, motif: int8 encoded arrays
         band_width: int, band width
+        need_end_score: bool, whether to return the end score, force to align to end if set to True
     Outputs:
         best_score: int, best score
+        end_score: int|None, end score if need_end_score is True, otherwise None
         trace_M: np.ndarray, traceback matrix for match / mismatch
         trace_I: np.ndarray, traceback matrix for insertion
         trace_D: np.ndarray, traceback matrix for deletion
@@ -1325,6 +1423,7 @@ def banded_dp_roll_motif(
         M[0, j] = 0
 
     best_score = NEG_INF
+    end_score = NEG_INF
     best_i = 0
     best_j = 0
 
@@ -1385,11 +1484,15 @@ def banded_dp_roll_motif(
                 cur_score = M[i, j]
 
         # early exit if no chance to update best score
-        if (n - i) * MATCH_SCORE + cur_score <= best_score:
+        if not need_end_score and (n - i) * MATCH_SCORE + cur_score <= best_score:
             break
+
+    if need_end_score:
+        end_score = cur_score
 
     return (
         best_score,
+        end_score if need_end_score else None,
         trace_M, trace_I, trace_D,
         best_i, best_j
     )
@@ -1568,24 +1671,27 @@ def merge_outputs(job_dir: str, rgn_filepaths: List[str]) -> str:
 # main function for scanning the genome
 #
 """
-def run_scan(args: argparse.Namespace) -> None:
+def run_scan(cfg: dict[str, Any]) -> None:
     """
     Run the scan function.
     Inputs:
-        args : argparse.Namespace, command line arguments
+        cfg : dict[str, Any], configuration dictionary
     Outputs:
         None
     """
-    # convert arguments to dictionary
-    cfg: dict[str, Any] = args.__dict__
-
+    JOB_DIR = cfg["job_dir"]
     # Set global variables for alignment functions
     global MATCH_SCORE, MISMATCH_PENALTY, GAP_OPEN_PENALTY, GAP_EXTEND_PENALTY
     MATCH_SCORE = cfg["match_score"]
     MISMATCH_PENALTY = cfg["mismatch_penalty"]
     GAP_OPEN_PENALTY = cfg["gap_open_penalty"]
     GAP_EXTEND_PENALTY = cfg["gap_extend_penalty"]
-    min_len: int = cfg["min_score"] / MATCH_SCORE     # TODO
+    global MAX_PERIOD, MIN_LEN, SECONDARY_SCORE_RATIO
+    MAX_PERIOD = cfg["max_period"]
+    MIN_LEN = cfg["min_score"] / MATCH_SCORE
+    SECONDARY_SCORE_RATIO = cfg["secondary"]
+    global SKIP_CIGAR
+    SKIP_CIGAR = cfg["skip_cigar"]
     
     if MATCH_SCORE < 0 or MISMATCH_PENALTY < 0 or GAP_OPEN_PENALTY < 0 or GAP_EXTEND_PENALTY < 0:
         msg = f"Match score, mismatch penalty, gap open penalty, and gap extend penalty must be non-negative integers"
@@ -1598,23 +1704,13 @@ def run_scan(args: argparse.Namespace) -> None:
     
     global GLOBAL_MATRIX
     GLOBAL_MATRIX = parasail.matrix_create("ACGT", MATCH_SCORE, -MISMATCH_PENALTY)
-    
-    JOB_DIR = ".vampire/" + time.strftime("%Y%m%d_%H%M%S")
-    cfg["job_dir"] = JOB_DIR
 
     START_TIME: float = time.time()
     logger.info(f"{cfg["threads"]} cores are used")
 
-    # make directory for temporary files
-    if Path(JOB_DIR).exists():
-        os.remove(JOB_DIR)
-        logger.warning(f"{JOB_DIR}/ exists, deleted")
-    Path(JOB_DIR).mkdir(parents=True, exist_ok=True)
-    logger.info(f"Created job directory: {JOB_DIR}")
-    
     # read input fasta file
-    fasta: List[SeqRecord] = list(read_fasta(cfg["fasta"]))
-    logger.info(f"Finished reading fasta file: {cfg["fasta"]}")
+    fasta: List[SeqRecord] = list(read_fasta(cfg["input"]))
+    logger.info(f"Finished reading fasta file: {cfg["input"]}")
 
     # split fasta file into windows
     Path(JOB_DIR + "/windows").mkdir(parents=True, exist_ok=True)
@@ -1625,7 +1721,7 @@ def run_scan(args: argparse.Namespace) -> None:
     Path(JOB_DIR + "/stats").mkdir(parents=True, exist_ok=True)
     Path(JOB_DIR + "/raw_rgns").mkdir(parents=True, exist_ok=True)
     Path(JOB_DIR + "/polished_rgns").mkdir(parents=True, exist_ok=True)
-    tasks: List[Tuple[str, str, List[int], int, int, int, bool]] = [(JOB_DIR, win_filepath, cfg["ksize"], cfg["max_period"], cfg["rolling_win_size"], cfg["min_smoothness"], min_len, cfg["composite"]) for win_filepath in win_filepaths]
+    tasks: List[Tuple[str, str, List[int], int, int, int]] = [(JOB_DIR, win_filepath, cfg["ksize"], cfg["max_period"], cfg["rolling_win_size"], cfg["min_smoothness"]) for win_filepath in win_filepaths]
     try:
         with Pool(processes = cfg["threads"]) as pool:
             results: List[str] = []
@@ -1644,7 +1740,7 @@ def run_scan(args: argparse.Namespace) -> None:
         raise RuntimeError(msg)
 
     # get regions that are across multiple windows
-    results: List[str] = identify_region_across_windows(results, args.seq_win_size, args.seq_ovlp_size)
+    results: List[str] = identify_region_across_windows(results, cfg["seq_win_size"], cfg["seq_ovlp_size"])
     logger.info(f"Finished identifying regions across multiple windows")
 
     # annotate regions
@@ -1683,10 +1779,9 @@ def run_scan(args: argparse.Namespace) -> None:
     logger.info(f"Time used: {TIME_USED:.2f} seconds")
 
     # make stats and report
-    if not cfg["skipreport"]:
+    if not cfg["skip_report"]:
         # import utils
-        from vampire.stats_utils import make_stats
-        from vampire import make_report
+        from vampire._report_utils import make_stats, make_report
         from importlib.resources import files
         # add data
         cfg["time_used"] = TIME_USED
@@ -1702,8 +1797,13 @@ def run_scan(args: argparse.Namespace) -> None:
     else:
         logger.info(f"Skipping report generation")
 
+    logger.info("Bye.")
+    
+    # copy log file
+    shutil.copy2(f"{JOB_DIR}/log.log", f"{cfg["prefix"]}.log")
+
+    logging.shutdown()
+    
     # remove temporary files
     if not cfg["debug"]:
         shutil.rmtree(JOB_DIR)
-
-    logger.info("Bye.")

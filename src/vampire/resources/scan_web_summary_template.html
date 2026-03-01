@@ -550,9 +550,11 @@
                                 <p class="help-text-title">Polished TRs</p>
                                 <p class="help-text-content">Refined regions whose boundaries have been extended from the raw TRs. 
                                     Neighboring regions with similar motifs are combined if adding the downstream sequence increases the confidence score.</p>
+                                <!--
                                 <p class="help-text-title">Composite TRs</p>
                                 <p class="help-text-content">Tandem repeats containing multiple motifs, e.g., (AT)<sub>m</sub>(CG)<sub>n</sub>. 
                                     This can include loci where individual tandem repeats are too short to be reported separately.</p>
+                                -->
                                 <p class="help-text-title">Final TRs</p>
                                 <p class="help-text-content">Tandem repeats that remain after filtering based on alignment scores and are output.</p>
                             </div>
@@ -568,11 +570,10 @@
                                         <td class="table-value">$NUMBER_OF_POLISHED_TRS$</td>
                                     </tr>
                                     <tr>
-                                        <td class="table-key">Number of Composite TRs</td>
-                                        <td class="table-value">$NUMBER_OF_COMPOSITE_TRS$</td>
-                                    </tr>
-                                    <tr>
                                         <td class="table-key">Number of Final TRs</td>
+                                        <!--
+                                        <td class="table-value">$NUMBER_OF_FINAL_TRS$ ($NUMBER_OF_COMPOSITE_TRS$)</td>
+                                        -->
                                         <td class="table-value">$NUMBER_OF_FINAL_TRS$</td>
                                     </tr>
                                     </tbody>
@@ -633,7 +634,7 @@
             <div class="tab-content" id="tab-motif-content">
                 <div class="columns" id="motif-charts-container">
                     <div class="card">
-                        <div class="card-title">Length/Period</div>
+                        <div class="card-title">Length and Period</div>
                         <div class="card-content" style="width: 100%; height: 100%;">
                             $LENGTH_PERIOD_DISTRIBUTION_PLOT$
                         </div>

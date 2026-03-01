@@ -1,6 +1,9 @@
 import argparse
 import logging
-from typing import List
+import time
+import shutil
+from pathlib import Path
+from typing import List, Any
 
 def _parse_int_list(s: str) -> List[int]:
     return [int(x) for x in s.split(",")]
@@ -18,20 +21,20 @@ def main():
     # scan
     # ------------------------------------------------------------
     parser_scan = subparsers.add_parser('scan',
-                                        description='VAMPIRE scan v0.1.0\n'
+                                        description='VAMPIRE scan\n'
                                                     'Usage: vampire scan [options] <input.fa> <output_prefix>\n'
                                                     'For example: vampire scan <input.fa> <output_prefix>\n',
                                         formatter_class=argparse.RawTextHelpFormatter,
                                         help='scan tandem repeats on genome')
     # I/O Options
     file_group = parser_scan.add_argument_group('I/O Options')
-    file_group.add_argument("fasta", type=str, help='Input FASTA file to scan TRs')
+    file_group.add_argument("input", type=str, help='Input FASTA file to scan TRs')
     file_group.add_argument("prefix", type=str, help="Output prefix")
 
     # General Options
     general_group = parser_scan.add_argument_group('General Options')
     general_group.add_argument("-t", "--thread", "--threads", dest="threads", type=int, default=8, help="Number of threads [8]")
-    general_group.add_argument("--debug", action="store_true", help="Output debuf info and keep temporary files [False]")
+    general_group.add_argument("--debug", action="store_true", help="Output debug info and keep temporary files [False]")
     general_group.add_argument("--seq-win-size", dest="seq_win_size", type=int, default=5000000, help="Window sequence size for scanning [5000000]")
     general_group.add_argument("--seq-ovlp-size", dest="seq_ovlp_size", type=int, default=100000, help="Overlap sequence size between windows [100000]")
 
@@ -52,15 +55,49 @@ def main():
     output_group = parser_scan.add_argument_group('Output Options')
     output_group.add_argument("-p", "--max-period", dest="max_period", type=int, default=1000, help="Maximum period for output [1000]")
     output_group.add_argument("-s", "--min-score", dest="min_score", type=int, default=50, help="Minimum alignment score for output [50]")
+    output_group.add_argument("--secondary", type=float, default=1.0, help="Minimum secondary annotation score compared with primary, set to 1 if no secondary annotation is needed [1.0]")
     output_group.add_argument("--format", type=str, choices=["brief", "trf", "bed"], default="trf", help="Output format [trf]") # TODO
-    output_group.add_argument("--composite", action="store_true", default=False, help="Use composite alignment [False]") # TODO
-    output_group.add_argument("--skipreport", action="store_true", default=False, help="Skip HTML report generation [False]")
+    output_group.add_argument("--skip-cigar", action="store_true", default=False, help="Skip cigar string output [False]") # TODO
+    output_group.add_argument("--skip-report", action="store_true", default=False, help="Skip HTML report generation [False]")
+
+    # ------------------------------------------------------------
+    # integrate
+    # ------------------------------------------------------------
+    parser_integrate = subparsers.add_parser('integrate',
+                                        description='VAMPIRE integrate\n'
+                                                    'Usage: vampire integrate [options] <input.tsv> <output_prefix>\n'
+                                                    'For example: vampire integrate --reference <input.tsv> <output_prefix>\n',
+                                        formatter_class=argparse.RawTextHelpFormatter,
+                                        help='integrate tandem repeats across samples')
+    
+    # I/O Options
+    file_group = parser_integrate.add_argument_group('I/O Options')
+    file_group.add_argument('input', type=str, help='Input tsv file of sample, genome and annotation')
+    file_group.add_argument('prefix', type=str, help='Output prefix')
+
+    # General Options
+    general_group = parser_integrate.add_argument_group('General Options')
+    general_group.add_argument('-r', '--reference', action='store_true', help='Use the first sample as reference [False]')
+    general_group.add_argument('--debug', action='store_true', help='Output debug info and keep temporary files [False]')
+    general_group.add_argument('-t', '--thread', '--threads', dest="threads", type=int, default=8, help="Number of threads [16]")
+
+    # Alignment Options
+    alignment_group = parser_integrate.add_argument_group('Alignment Options')
+    alignment_group.add_argument('-a', '--alignment-params', type=str, default="-x asm20 --secondary=no --cs", help="Alignment parameters for integration [-x asm20 --secondary=no --cs]")
+    
+    # Integration Options
+    integration_group = parser_integrate.add_argument_group('Integration Options')
+    integration_group.add_argument('-f', '--flanking-length', type=int, default=100, help="Flanking length for integration [100]")
+    
+    # Output Options
+    output_group = parser_integrate.add_argument_group('Output Options')
+    output_group.add_argument('--keep-chain', action='store_true', help='Keep chain files after integration [False]')
 
     # ------------------------------------------------------------
     # anno
     # ------------------------------------------------------------
     parser_anno = subparsers.add_parser('anno',
-                                        description='VAMPIRE anno v0.3.0\n'
+                                        description='VAMPIRE anno\n'
                                                     'Usage: vampire anno [--auto] [options] [input.fa] [output_prefix]\n'
                                                     'For example: vampire anno --auto [input.fa] [output_prefix]\n'
                                                     '             vampire anno -k 13 -s 15 [CEN1.fa] [output_prefix]\n',
@@ -111,7 +148,7 @@ def main():
     # generator
     # ------------------------------------------------------------
     parser_generator = subparsers.add_parser('generator',
-                                            description='VAMPIRE generator v0.1.0\n'
+                                            description='VAMPIRE generator\n'
                                                         'Usage: vampire generator -m [motif] -l [length] -r [mutation_rate] -s [seed] -p [output_prefix]\n'
                                                         'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n',
                                             help='Generate tandem repeat sequences from reference motifs')
@@ -125,7 +162,7 @@ def main():
     # mkref
     # ------------------------------------------------------------
     parser_mkref = subparsers.add_parser('mkref', 
-                                         description='VAMPIRE mkref v0.1.0\n'
+                                         description='VAMPIRE mkref\n'
                                             'Usage: vampire mkref [options] [prefix] [output_prefix]\n'
                                             'For example: vampire mkref [prefix] [output_prefix]\n',
                                          help='Make the reference database from annotation result')
@@ -136,7 +173,7 @@ def main():
     # evaluate
     # ------------------------------------------------------------
     parser_evaluate = subparsers.add_parser('evaluate', 
-                                            description='VAMPIRE evaluate v0.1.0\n'
+                                            description='VAMPIRE evaluate\n'
                                                 'Usage: vampire evaluate [options] [input_prefix] [output_prefix]\n'
                                                 'For example: vampire evaluate [input_prefix] [output_prefix]\n',
                                             help='Evaluate the tandem repeats.')
@@ -150,7 +187,7 @@ def main():
     # refine
     # ------------------------------------------------------------
     parser_refine = subparsers.add_parser('refine', 
-                                          description='VAMPIRE refine v0.1.0\n'
+                                          description='VAMPIRE refine\n'
                                                 'Usage: vampire refine [options] [prefix] [action]\n'
                                                 'For example: vampire refine [prefix] [action]\n',
                                           help='Refine the tandem repeats.')
@@ -163,7 +200,7 @@ def main():
     # logo
     # ------------------------------------------------------------
     parser_logo = subparsers.add_parser('logo', 
-                                        description='VAMPIRE logo v0.1.0\n'
+                                        description='VAMPIRE logo\n'
                                             'Usage: vampire logo [options] [input prefix] [outputprefix]\n'
                                             'For example: vampire logo [input prefix] [output_prefix]\n',
                                         help='Generate the logo of the tandem repeats.')
@@ -176,7 +213,7 @@ def main():
     # identity
     # ------------------------------------------------------------
     parser_identity = subparsers.add_parser('identity', 
-                                            description='VAMPIRE identity v0.2.0\n'
+                                            description='VAMPIRE identity\n'
                                                 'Usage: vampire identity [options] [input prefix] [output_prefix]\n'
                                                 'For example: vampire identity [input prefix] [output_prefix]\n',
                                             help='Calculate the identity of the tandem repeats.')
@@ -196,13 +233,29 @@ def main():
     parser_plotheatmap.add_argument('--output', required=True, help='Output file')
     parser_plotheatmap.set_defaults(func=run_plotheatmap)'''
 
+    # get arguments
     args = parser.parse_args()
-    DEBUG = getattr(args, "debug", False)
+    cfg: dict[str, Any] = args.__dict__
+    JOB_DIR = ".vampire/" + time.strftime("%Y%m%d_%H%M%S")
+    cfg["job_dir"] = JOB_DIR
+
+    # make directory for temporary files
+    if Path(JOB_DIR).exists():
+        shutil.rmtree(JOB_DIR)
+    Path(JOB_DIR).mkdir(parents=True, exist_ok=True)
+
+    # set up logging
+    DEBUG = cfg.get("debug", False)
+    handlers = [
+        logging.StreamHandler(),                                     # terminal
+        logging.FileHandler(JOB_DIR + "/log.log", encoding="utf-8")  # log file
+    ]
     if DEBUG:
         logging.basicConfig(
             level=logging.DEBUG,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=handlers
         )
         logging.getLogger("numpy").setLevel(logging.WARNING)
         logging.getLogger("numba").setLevel(logging.WARNING)
@@ -211,41 +264,48 @@ def main():
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=handlers
         )
+    logger = logging.getLogger(__name__)
+    logger.info(f"Created job directory: {JOB_DIR}")
 
-    match args.command:
+    match cfg.get("command"):
         case "scan":
             from vampire.scan import run_scan
-            run_scan(args)
+            run_scan(cfg)
+
+        case "integrate":
+            from vampire.integrate import run_integrate
+            run_integrate(cfg)
 
         case "anno":
             from vampire.anno import run_anno
-            run_anno(args)
+            run_anno(cfg)
 
         case "generator":
             from vampire.generator import run_generator
-            run_generator(args)
+            run_generator(cfg)
 
         case "mkref":
             from vampire.mkref import run_mkref
-            run_mkref(args)
+            run_mkref(cfg)
 
         case "evaluate":
             from vampire.evaluate import run_evaluate
-            run_evaluate(args)
+            run_evaluate(cfg)
 
         case "refine":
             from vampire.refine import run_refine
-            run_refine(args)
+            run_refine(cfg)
 
         case "logo":
             from vampire.logo import run_logo
-            run_logo(args)
+            run_logo(cfg)
 
         case "identity":
             from vampire.identity import run_identity
-            run_identity(args)
+            run_identity(cfg)
 
         case _:
             parser.print_help()

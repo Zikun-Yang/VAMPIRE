@@ -39,6 +39,15 @@ dependencies = [
 ]
 requires-python = ">=3.10,<3.13"
 
+[project.optional-dependencies]
+docs = [
+    "sphinx",
+    "sphinx-design",
+    "sphinx-rtd-theme",
+    "sphinx-autodoc-typehints",
+    "myst_parser"
+]
+
 [project.urls]
 Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"
 
