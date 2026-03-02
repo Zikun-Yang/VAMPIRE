@@ -87,8 +87,8 @@ def make_stats(params: dict) -> dict:
                 "NUMBER_OF_RAW_TRS": get_number_of_raw_trs(params["job_dir"]),
                 "NUMBER_OF_POLISHED_TRS": get_number_of_polished_trs(params["job_dir"]),
                 "NUMBER_OF_FINAL_TRS": f"{df.height:,}",
-                "SMOOTHNESS_PLOT": fig_to_html(plot_smoothness_score_distribution(params["job_dir"])),
-                "SMOOTHNESS_COVERAGE": calculate_smoothness_coverage(params["job_dir"], params["min_smoothness"]),
+                "SMOOTHNESS_PLOT": fig_to_html(plot_smoothness_score_distribution(smoothness)),
+                "SMOOTHNESS_COVERAGE": calculate_smoothness_coverage(smoothness, params["min_smoothness"]),
                 "TR_DISTRIBUTION_PLOT": fig_to_html(plot_tr_distribution(df, fasta_metainfo)),
                 "LENGTH_PERIOD_DISTRIBUTION_PLOT": fig_to_html(plot_length_period_distribution(df)),
                 "ENTROPY_DISTRIBUTION_PLOT": fig_to_html(plot_entropy_distribution(df)),
@@ -101,7 +101,7 @@ def make_stats(params: dict) -> dict:
         case _:
             raise ValueError(f"Invalid subcommand: {params['subcommand']}")
     return data
-
+s
 def fig_to_html(fig: go.Figure) -> str:
     """
     Convert a figure to an HTML string
