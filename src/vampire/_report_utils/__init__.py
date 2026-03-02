@@ -1,15 +1,17 @@
-from importlib import import_module
-from pkgutil import iter_modules
+from ._make_stats import make_stats
+from ._make_report import make_report
+from ._stats_cigar import(
+    ops_to_cigar,
+    get_copy_number,
+    calculate_alignment_metrics
+)
+from ._stats_seq import calculate_nucleotide_composition
 
-__all__ = []
-
-for _, module_name, _ in iter_modules(__path__):
-    if module_name.startswith("_"):
-        continue
-
-    module = import_module(f"{__name__}.{module_name}")
-
-    if hasattr(module, "__all__"):
-        for name in module.__all__:
-            globals()[name] = getattr(module, name)
-            __all__.append(name)
+__all__ = [
+    make_stats,
+    make_report,
+    ops_to_cigar,
+    get_copy_number,
+    calculate_alignment_metrics,
+    calculate_nucleotide_composition
+]

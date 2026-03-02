@@ -2,10 +2,8 @@
 
 # data processing
 import numpy as np
-import polars as pl
 from Bio import SeqRecord, SeqIO
-from Bio.Seq import Seq
-from collections import Counter, defaultdict
+from collections import defaultdict
 from numpy.lib.stride_tricks import sliding_window_view  # rolling median
 # multiprocessing
 from tqdm import tqdm
@@ -13,8 +11,6 @@ from multiprocessing import Pool
 # type hints
 from typing import List, Dict, Tuple, Any, Optional
 # basic packages for file operations, logging
-import os
-import re
 import ast
 import csv
 import time
@@ -26,9 +22,13 @@ from pathlib import Path
 import numba
 # seqeunce alignment packages
 import edlib
-import parasail
 
-from vampire._report_utils import ops_to_cigar, get_copy_number, calculate_alignment_metrics, calculate_nucleotide_composition
+from vampire._report_utils import(
+    ops_to_cigar,
+    get_copy_number,
+    calculate_alignment_metrics,
+    calculate_nucleotide_composition
+)
 
 # type definitions
 Region = List[Any] # [win_id, chrom, start, end, ksizes, score, periods] : [int, str, int, int, List[int], float, List[int]]
@@ -1701,9 +1701,6 @@ def run_scan(cfg: dict[str, Any]) -> None:
         msg = f"Sequence window size must be greater than overlap size"
         logger.error(f"ERROR: {msg}")
         raise ValueError(msg)
-    
-    global GLOBAL_MATRIX
-    GLOBAL_MATRIX = parasail.matrix_create("ACGT", MATCH_SCORE, -MISMATCH_PENALTY)
 
     START_TIME: float = time.time()
     logger.info(f"{cfg["threads"]} cores are used")
