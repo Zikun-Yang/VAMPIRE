@@ -8,12 +8,12 @@
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
-#
+
 import os
 import sys
 import tomllib
 # Add the src directory to the path so we can import vampire
-ROOT = os.path.abspath(os.path.join(__file__, "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
 # Read version from pyproject.toml
@@ -29,11 +29,10 @@ def get_version_from_pyproject():
         return '0.3.0'
 
 # -- Project information -----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'VAMPIRE'
 copyright = '2026, VAMPIRE Contributors'
-author = 'Zikun Yang, Shilong Zhang, Yafei Mao'
+author = 'VAMPIRE development team'
 # The full version, including alpha/beta/rc tags (automatically read from pyproject.toml)
 release = get_version_from_pyproject()
 # The short X.Y version (extract major.minor from release)
@@ -41,7 +40,6 @@ version = '.'.join(release.split('.')[:2])
 repository_url = "https://github.com/Zikun-Yang/VAMPIRE"
 
 # -- General configuration ---------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -51,7 +49,11 @@ extensions = [
     "sphinx_autodoc_typehints",
     "myst_parser",
     "sphinx_design",
+    "sphinx_autodoc_typehints",  # needs to be after napoleon
+    "sphinx_design",
 ]
+
+# Generate the API documentation when building
 
 source_suffix = {
     '.rst': 'restructuredtext',
@@ -71,19 +73,26 @@ templates_path = ['_templates']
 exclude_patterns = []
 
 # -- Options for autosummary -------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/extensions/autosummary.html
-
 autosummary_generate = True
+autodoc_typehints = "none"
+autodoc_member_order = "bysource"
+autodoc_default_options = {
+    # Don’t show members in addition to the autosummary table added by `_templates/class.rst`
+    "members": False,
+    # show “Bases: SomeClass” at the top of class docs
+    "show-inheritance": True,
+}
 
 # -- Options for Napoleon ----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/extensions/napoleon.html
 
-napoleon_numpy_docstring = True
 napoleon_google_docstring = False
+napoleon_numpy_docstring = True
+napoleon_include_init_with_doc = False
+napoleon_use_rtype = True  # having a separate entry generally helps readability
+napoleon_use_param = True
+napoleon_custom_sections = [("Params", "Parameters")]
 
 # -- Options for HTML output -------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
-
 
 html_theme = 'scanpydoc'
 html_static_path = ['_static']
@@ -99,3 +108,11 @@ html_theme_options = {
         "image_dark": "_static/img/VAMPIRE_logo_with_name_dark.png",
     },
 }
+
+# -- Options for plot -------------------------------------------------------
+
+"""plot_include_source = True
+plot_formats = [("png", 90)]
+plot_html_show_formats = False
+plot_html_show_source_link = False
+plot_working_directory = ROOT  # Project root"""

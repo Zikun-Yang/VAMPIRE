@@ -55,6 +55,7 @@ def main():
     output_group = parser_scan.add_argument_group('Output Options')
     output_group.add_argument("-p", "--max-period", dest="max_period", type=int, default=1000, help="Maximum period for output [1000]")
     output_group.add_argument("-s", "--min-score", dest="min_score", type=int, default=50, help="Minimum alignment score for output [50]")
+    output_group.add_argument("-c", "--min-copy", dest="min_copy", type=float, default=1.5, help="Minimum copy number for output [1.5]")
     output_group.add_argument("--secondary", type=float, default=1.0, help="Minimum secondary annotation score compared with primary, set to 1 if no secondary annotation is needed [1.0]")
     output_group.add_argument("--format", type=str, choices=["brief", "trf", "bed"], default="trf", help="Output format [trf]") # TODO
     output_group.add_argument("--skip-cigar", action="store_true", default=False, help="Skip cigar string output [False]") # TODO
@@ -91,7 +92,7 @@ def main():
     
     # Output Options
     output_group = parser_integrate.add_argument_group('Output Options')
-    output_group.add_argument('--keep-chain', action='store_true', help='Keep chain files after integration [False]')
+    output_group.add_argument('--redo', action='store_true', help='Overwrite existing results [False]')
 
     # ------------------------------------------------------------
     # anno
@@ -150,7 +151,9 @@ def main():
     parser_generator = subparsers.add_parser('generator',
                                             description='VAMPIRE generator\n'
                                                         'Usage: vampire generator -m [motif] -l [length] -r [mutation_rate] -s [seed] -p [output_prefix]\n'
-                                                        'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n',
+                                                        'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n'
+                                                        '             vampire generator -m "GGC" "GGT" -l 1000 -r 0 -p [output_prefix]\n',
+                                            formatter_class=argparse.RawTextHelpFormatter,
                                             help='Generate tandem repeat sequences from reference motifs')
     parser_generator.add_argument('-m', '--motifs', required=True, type=str, nargs='+', help='Input motif(s)')
     parser_generator.add_argument('-l', '--length', default=1000, type=int, help='Length of simulated tandem repeat')
@@ -165,6 +168,7 @@ def main():
                                          description='VAMPIRE mkref\n'
                                             'Usage: vampire mkref [options] [prefix] [output_prefix]\n'
                                             'For example: vampire mkref [prefix] [output_prefix]\n',
+                                         formatter_class=argparse.RawTextHelpFormatter,
                                          help='Make the reference database from annotation result')
     parser_mkref.add_argument('prefix', type=str, help='annotation result prefix')
     parser_mkref.add_argument('output', type=str, help='output')
@@ -176,6 +180,7 @@ def main():
                                             description='VAMPIRE evaluate\n'
                                                 'Usage: vampire evaluate [options] [input_prefix] [output_prefix]\n'
                                                 'For example: vampire evaluate [input_prefix] [output_prefix]\n',
+                                            formatter_class=argparse.RawTextHelpFormatter,
                                             help='Evaluate the tandem repeats.')
     parser_evaluate.add_argument('prefix', help='input prefix of raw results')
     parser_evaluate.add_argument('output', help='output prefix of evaluation results')
@@ -190,6 +195,7 @@ def main():
                                           description='VAMPIRE refine\n'
                                                 'Usage: vampire refine [options] [prefix] [action]\n'
                                                 'For example: vampire refine [prefix] [action]\n',
+                                          formatter_class=argparse.RawTextHelpFormatter,
                                           help='Refine the tandem repeats.')
     parser_refine.add_argument("prefix", type=str, help="output prefix of raw results")
     parser_refine.add_argument("action", type=str, help="action file")
@@ -203,6 +209,7 @@ def main():
                                         description='VAMPIRE logo\n'
                                             'Usage: vampire logo [options] [input prefix] [outputprefix]\n'
                                             'For example: vampire logo [input prefix] [output_prefix]\n',
+                                        formatter_class=argparse.RawTextHelpFormatter,
                                         help='Generate the logo of the tandem repeats.')
     parser_logo.add_argument("prefix", type=str,  help="prefix\nfor motif file, plot seq Logo of reference motifs\nfor annotation file, plot seq Logo of actual motif")
     parser_logo.add_argument("output", type=str,  help="pdf/png name")
@@ -216,6 +223,7 @@ def main():
                                             description='VAMPIRE identity\n'
                                                 'Usage: vampire identity [options] [input prefix] [output_prefix]\n'
                                                 'For example: vampire identity [input prefix] [output_prefix]\n',
+                                            formatter_class=argparse.RawTextHelpFormatter,
                                             help='Calculate the identity of the tandem repeats.')
     parser_identity.add_argument("prefix", type=str, help="prefix of the input file")
     parser_identity.add_argument("output", type=str, help="output prefix")
@@ -310,6 +318,12 @@ def main():
         case _:
             parser.print_help()
             parser.exit(1)
+
+    logging.shutdown()
+    
+    # remove temporary files
+    if not cfg.get("debug", False):
+        shutil.rmtree(JOB_DIR)
 
 if __name__ == '__main__':
     main()

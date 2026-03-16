@@ -1,9 +1,22 @@
 # preprocessing `pp`
 
-This submodule stores the functions for reading data...
+```{eval-rst}
+.. module:: vampire.pp
+```
 
-```{toctree}
-:maxdepth: 2
+```{eval-rst}
+.. currentmodule:: vampire
+```
 
-read_bed
+## Read
+
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
+   pp.read_bed
+   pp.read_bedgraph
+   pp.read_indexed_bed
+
 ```

@@ -29,7 +29,7 @@ def make_minimap2_index(genome: str, alignment_params: str, alignment_index: str
     Outputs:
         None
     """
-    subprocess.run(
+    result = subprocess.run(
         [
             "minimap2",
             *alignment_params.split(),
@@ -40,6 +40,8 @@ def make_minimap2_index(genome: str, alignment_params: str, alignment_index: str
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"minimap2 index creation failed for {genome}")
 
 def make_minimap2_alignment(reference: str, query: str, alignment_params: str, alignment_file: str, threads: int) -> None:
     """
@@ -52,17 +54,20 @@ def make_minimap2_alignment(reference: str, query: str, alignment_params: str, a
     Outputs:
         None
     """
-    subprocess.run(
-        [
-            "minimap2",
-            *alignment_params.split(),
-            "-t", str(threads),
-            reference,
-            query,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with open(alignment_file, "w") as fo:
+        result = subprocess.run(
+            [
+                "minimap2",
+                *alignment_params.split(),
+                "-t", str(threads),
+                reference,
+                query,
+            ],
+            stdout=fo,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"minimap2 alignment failed for {reference} vs {query}")
 
 def make_chain_file(alignment_file: str, chain_file: str) -> None:
     """
@@ -73,7 +78,7 @@ def make_chain_file(alignment_file: str, chain_file: str) -> None:
     Outputs:
         None
     """
-    subprocess.run(
+    result = subprocess.run(
         [
             "transanno",
             "minimap2chain",
@@ -83,6 +88,8 @@ def make_chain_file(alignment_file: str, chain_file: str) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    if result.returncode != 0:
+        raise RuntimeError(f"Chain file creation failed for {alignment_file}")
 
 def get_chain_direction(chain_file: str) -> None:
     """
@@ -93,13 +100,14 @@ def get_chain_direction(chain_file: str) -> None:
         None
     """
     chain_dir_filename = chain_file.replace(".chain", ".chain_direction.txt")
-    subprocess.run(
-        "grep",
-        "chain",
-        chain_file,
-        ">",
-        chain_dir_filename
-    )
+    with open(chain_dir_filename, "w") as f:
+        result = subprocess.run(
+            ["grep", "chain", chain_file],
+            stdout=f,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            logger.warning(f"Failed to extract chain direction from {chain_file}")
 
 """
 #
@@ -138,10 +146,10 @@ def liftover_flank(
 """
 
 def anchor_tr(
-    r_sample: str,
-    q_sample: str,
+    r_sample: Dict[str, Any],
+    q_sample: Dict[str, Any],
     flank_len: int = 500
-) -> None:
+) -> pl.DataFrame:
     """
     Anchor tandem repeats across samples.
     Inputs:
@@ -149,27 +157,35 @@ def anchor_tr(
         q_sample : dict[str, Any], query sample dictionary
         flank_len : int, flanking length
     Outputs:
-        None
+        pl.DataFrame: Updated query annotation with anchored IDs
     """
     r_trs = r_sample["annotation"]
     q_trs = q_sample["annotation"]
-    chain_file = f"{JOB_DIR}/chain/{r_sample}__{q_sample}.chain"
+    chain_file = f"{JOB_DIR}/chain/{r_sample['sample']}__{q_sample['sample']}.chain"
 
     # make coordinate bed file
-    anchor_bed = f"{JOB_DIR}/anchor_tr.bed"
+    anchor_bed = f"{JOB_DIR}/anchor_tr_{q_sample['sample']}.bed"
     with open(anchor_bed, "w") as f:
-        for tr in q_trs.iter_rows():
+        for tr in q_trs.iter_rows(named=True):
             e1 = tr["start"]
-            s1 = tr["start"] - min(flank_len, tr["end_flanking"])
+            # Use start_flanking for 5' end, end_flanking for 3' end
+            # Handle missing flanking values (use infinity as default, then clamp to flank_len)
+            start_flank = tr.get("start_flanking")
+            end_flank = tr.get("end_flanking")
+            if start_flank is None or start_flank == float('inf') or start_flank > flank_len:
+                start_flank = flank_len
+            if end_flank is None or end_flank == float('inf') or end_flank > flank_len:
+                end_flank = flank_len
+            s1 = tr["start"] - min(flank_len, start_flank)
             s2 = tr["end"]
-            e2 = tr["end"] + min(flank_len, tr["end_flanking"])
-            f.write(f"""{tr['chrom']}\t{s1}\t{e1}\t{tr['id']}-5p\n{
-                        tr['chrom']}\t{s2}\t{e2}\t{tr['id']}-3p\n""")
+            e2 = tr["end"] + min(flank_len, end_flank)
+            f.write(f"{tr['chrom']}\t{s1}\t{e1}\t{tr['id']}-5p\n")
+            f.write(f"{tr['chrom']}\t{s2}\t{e2}\t{tr['id']}-3p\n")
     
-    success_bed = f"{JOB_DIR}/success_tr.bed"
-    fail_bed = f"{JOB_DIR}/fail_tr.bed"
+    success_bed = f"{JOB_DIR}/success_tr_{q_sample['sample']}.bed"
+    fail_bed = f"{JOB_DIR}/fail_tr_{q_sample['sample']}.bed"
     # run transanno
-    subprocess.run(
+    result = subprocess.run(
         [
             "transanno",
             "liftbed",
@@ -181,15 +197,41 @@ def anchor_tr(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    if result.returncode != 0:
+        logger.warning(f"transanno liftbed failed for {r_sample['sample']} vs {q_sample['sample']}")
+        return q_trs
 
     # read success and fail beds
+    if not Path(success_bed).exists() or Path(success_bed).stat().st_size == 0:
+        logger.warning(f"No successful liftover for {r_sample['sample']} vs {q_sample['sample']}")
+        return q_trs
+    
     success_trs = pl.read_csv(success_bed, separator="\t", has_header=False)
+    if len(success_trs) == 0:
+        logger.warning(f"Empty success bed file for {r_sample['sample']} vs {q_sample['sample']}")
+        return q_trs
+    
     success_trs.columns = ["chrom", "start", "end", "id"] 
     success_trs = success_trs.with_columns(
-        pl.col("id").str.split("-").str[0].astype(int).alias("locus_id")
+        pl.col("id").str.split("-").str[0].cast(pl.Int64).alias("locus_id")
     )
-    print(success_trs)
+    logger.debug(f"Successfully lifted over {len(success_trs)} flanking regions for {q_sample['sample']}")
 
+    # Read chain direction file to get strand information
+    chain_dir_file = chain_file.replace(".chain", ".chain_direction.txt")
+    strand_map = {}
+    if Path(chain_dir_file).exists():
+        with open(chain_dir_file, "r") as f:
+            for line in f:
+                if line.startswith("chain"):
+                    parts = line.strip().split()
+                    if len(parts) >= 6:
+                        # chain format: chain score tName tSize tStrand tStart ...
+                        strand_map[parts[2]] = parts[4]  # chromosome -> strand
+    
+    # Create a mapping from query locus_id to reference locus_id
+    id_mapping = {}
+    
     for locus_id in success_trs["locus_id"].unique():
         success_trs_locus = success_trs[success_trs["locus_id"] == locus_id]
 
@@ -197,50 +239,79 @@ def anchor_tr(
         if len(success_trs_locus) < 2:
             continue
 
-        end5p = (
-            success_trs_locus
-            .filter(pl.col("id") == f"{locus_id}-5p")
-            .row(0)
-        )
-        end3p = (
-            success_trs_locus
-            .filter(pl.col("id") == f"{locus_id}-3p")
-            .row(0)
-        )
+        end5p_row = success_trs_locus.filter(pl.col("id") == f"{locus_id}-5p")
+        end3p_row = success_trs_locus.filter(pl.col("id") == f"{locus_id}-3p")
+        
+        if len(end5p_row) == 0 or len(end3p_row) == 0:
+            continue
+            
+        end5p = end5p_row.row(0)
+        end3p = end3p_row.row(0)
+        
         # different chromosomes
         if end5p[0] != end3p[0]:
             continue
         chrom = end5p[0]
-        # different strands
         
-        strand = end5p[3] # TODO
+        # Get strand from chain direction file or assume positive
+        strand = strand_map.get(chrom, '+')
+        
+        # Calculate lifted over TR region
+        # For positive strand: 5p end -> start, 3p start -> end
+        # For negative strand: 3p end -> start, 5p start -> end
         if strand == '+':
-            s = end5p[2]
-            e = end3p[1]
+            s = end5p[2]  # 5p end becomes start
+            e = end3p[1]  # 3p start becomes end
         else:
-            s = end3p[2]
-            e = end5p[1]
+            s = end3p[2]  # 3p end becomes start
+            e = end5p[1]  # 5p start becomes end
         
-        # intersect with trs
+        # Fix: correct interval intersection logic
+        # Two intervals [s1, e1] and [s2, e2] overlap if: s1 <= e2 and s2 <= e1
         ovlp_trs = r_trs.filter(
             (pl.col("chrom") == chrom) &
-            (pl.col("start") >= e) &
+            (pl.col("start") <= e) &
             (pl.col("end") >= s)
         )
+        
         match len(ovlp_trs):
             case 0:
-                logger.warning(f"No tandem repeats found at {chrom}:{s}-{e}")
+                logger.debug(f"No tandem repeats found at {chrom}:{s}-{e} for locus {locus_id}")
             case 1:
                 # get r_tr locus_id
-                r_tr_locus_id = ovlp_trs["id"].iloc[0]
-                q_trs = q_trs.with_columns(
-                    pl.when(pl.col("id") == locus_id)
-                    .then(pl.lit(r_tr_locus_id))
-                    .otherwise(pl.col("id"))
-                    .alias("id")
-                )
+                r_tr_locus_id = ovlp_trs["id"][0]
+                id_mapping[locus_id] = r_tr_locus_id
+                logger.debug(f"Anchored locus {locus_id} to reference locus {r_tr_locus_id} at {chrom}:{s}-{e}")
             case _:
-                logger.warning(f"Multiple tandem repeats found at {chrom}:{s}-{e}")
+                # If multiple overlaps, choose the one with best overlap
+                # Calculate overlap for each
+                best_overlap = 0
+                best_id = None
+                for r_tr in ovlp_trs.iter_rows(named=True):
+                    overlap = min(e, r_tr["end"]) - max(s, r_tr["start"])
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_id = r_tr["id"]
+                if best_id is not None:
+                    id_mapping[locus_id] = best_id
+                    logger.debug(f"Anchored locus {locus_id} to reference locus {best_id} (best overlap) at {chrom}:{s}-{e}")
+                else:
+                    logger.warning(f"Multiple tandem repeats found at {chrom}:{s}-{e} for locus {locus_id}, but no valid overlap")
+    
+    # Apply ID mapping to q_trs
+    if id_mapping:
+        # Create a mapping expression
+        q_trs = q_trs.with_columns(
+            pl.col("id").map_elements(
+                lambda x: id_mapping.get(x, x),
+                return_dtype=pl.Int64
+            ).alias("id")
+        )
+        logger.info(f"Anchored {len(id_mapping)} TRs from {q_sample['sample']} to {r_sample['sample']}")
+    else:
+        logger.info(f"No TRs anchored from {q_sample['sample']} to {r_sample['sample']}")
+    
+    return q_trs
 
         
 
@@ -259,19 +330,19 @@ def run_integrate(cfg: dict[str, Any]) -> None:
     Outputs:
         None
     """
-    global JOB_DIR
+    global JOB_DIR, PREFIX
     JOB_DIR = cfg["job_dir"]
+    PREFIX = cfg["prefix"]
     THREADS = cfg["threads"]
     ALIGNMENT_PARAMS = cfg["alignment_params"]
     samples = []
 
     # create job directory
-    Path(cfg["prefix"]).mkdir(parents=True, exist_ok=True)
-    Path(cfg["prefix"] + "/chain").mkdir(parents=True, exist_ok=True)
+    Path(PREFIX).mkdir(parents=True, exist_ok=True)
+    Path(PREFIX + "/alignment_index").mkdir(parents=True, exist_ok=True)
+    Path(PREFIX + "/alignment").mkdir(parents=True, exist_ok=True)
+    Path(PREFIX + "/chain").mkdir(parents=True, exist_ok=True)
     Path(JOB_DIR).mkdir(parents=True, exist_ok=True)
-    Path(JOB_DIR + "/alignment_index").mkdir(parents=True, exist_ok=True)
-    Path(JOB_DIR + "/alignment").mkdir(parents=True, exist_ok=True)
-    Path(JOB_DIR + "/chain").mkdir(parents=True, exist_ok=True)
 
     # check software dependencies
     if not shutil.which("minimap2"):
@@ -287,6 +358,9 @@ def run_integrate(cfg: dict[str, Any]) -> None:
         next(reader) # skip header
         for row in reader:
             sample, genome, annotation_file = row
+            if sample.startswith("#"):
+                logger.info(f"Skipping {sample.replace("#", "")}")
+                continue
             # read annotation
             anno = pl.read_csv(annotation_file, separator="\t", has_header=True)
             # add id and sample column
@@ -297,16 +371,37 @@ def run_integrate(cfg: dict[str, Any]) -> None:
             )
             offset += n
             # add flanking length column
+            # Calculate flanking regions within each chromosome
+            # Sort by chrom and start to ensure proper ordering
+            if "chrom" in anno.columns:
+                anno = anno.sort(["chrom", "start"])
+                anno = anno.with_columns(
+                    pl.col("end").shift(1).over("chrom").alias("prev_end"),
+                    pl.col("start").shift(-1).over("chrom").alias("next_start")
+                )
+            else:
+                # If no chrom column, calculate globally
+                anno = anno.sort("start")
+                anno = anno.with_columns(
+                    pl.col("end").shift(1).alias("prev_end"),
+                    pl.col("start").shift(-1).alias("next_start")
+                )
             anno = anno.with_columns(
-                (pl.col("start") - pl.col("end").shift(1)).alias("start_flanking"),
-                (pl.col("start").shift(-1) - pl.col("end")).alias("end_flanking")
+                (pl.col("start") - pl.col("prev_end")).alias("start_flanking"),
+                (pl.col("next_start") - pl.col("end")).alias("end_flanking")
             )
-            # fill nulls
+            # Fill nulls with infinity to indicate no flanking region
+            anno = anno.with_columns(
+                pl.col("start_flanking").fill_null(float('inf')),
+                pl.col("end_flanking").fill_null(float('inf'))
+            )
+            # Drop temporary columns
+            anno = anno.drop(["prev_end", "next_start"])
             samples.append({
                 "sample": sample,
                 "genome": genome,
                 "annotation": anno,
-                "alignment_index": f"{JOB_DIR}/alignment_index/{sample}.mmi"
+                "alignment_index": f"{PREFIX}/alignment_index/{sample}.mmi"
             })
 
     if cfg["reference"]:
@@ -327,53 +422,95 @@ def run_integrate(cfg: dict[str, Any]) -> None:
     logger.info("Starting making alignment indexes")
     if cfg["reference"]:
         for sample in tqdm(samples[:1], desc="Making indexes"):
-            make_minimap2_index(sample["genome"], ALIGNMENT_PARAMS, sample["alignment_index"], THREADS)
+            if cfg["redo"] or not Path(sample["alignment_index"]).exists():
+                make_minimap2_index(sample["genome"], ALIGNMENT_PARAMS, sample["alignment_index"], THREADS)
     else:
         for sample in tqdm(samples[:-1], desc="Making indexes"):
-            make_minimap2_index(sample["genome"], ALIGNMENT_PARAMS, sample["alignment_index"], THREADS)
+            if cfg["redo"] or not Path(sample["alignment_index"]).exists():
+                make_minimap2_index(sample["genome"], ALIGNMENT_PARAMS, sample["alignment_index"], THREADS)
     
     # make alignments
     logger.info("Starting making alignments")
     for sample_pair in tqdm(sample_pairs, desc="Making alignments"):
-        alignment_file = f"{JOB_DIR}/alignment/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.paf"
-        make_minimap2_alignment(sample_pair[0]["alignment_index"],
-                                sample_pair[1]["genome"],
-                                ALIGNMENT_PARAMS,
-                                alignment_file,
-                                THREADS)
+        alignment_file = f"{PREFIX}/alignment/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.paf"
+        if cfg["redo"] or not Path(alignment_file).exists():
+            make_minimap2_alignment(sample_pair[0]["alignment_index"],
+                                    sample_pair[1]["genome"],
+                                    ALIGNMENT_PARAMS,
+                                    alignment_file,
+                                    THREADS)
 
     # make chain files
     logger.info("Starting making chain files")
     for sample_pair in tqdm(sample_pairs, desc="Making chains"):
-        alignment_file = f"{JOB_DIR}/alignment/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.paf"
-        chain_file = f"{JOB_DIR}/chain/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.chain"
-        make_chain_file(alignment_file, chain_file)
-        get_chain_direction(chain_file)
+        alignment_file = f"{PREFIX}/alignment/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.paf"
+        chain_file = f"{PREFIX}/chain/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.chain"
+        if cfg["redo"] or not Path(chain_file).exists():
+            make_chain_file(alignment_file, chain_file)
+            get_chain_direction(chain_file)
 
     # integrate tandem repeats
-    offset = 0
+    logger.info("Starting TR integration")
+    flank_len = cfg.get("flanking_length", 100)
+    
     if cfg["reference"]:
-        # reference genome mode
-        for sample_pair in sample_pairs:
-            anchor_tr(sample_pair[0], sample_pair[1], flank_len = cfg["flanking_length"])
-            ####
-            ####
-            ####
-
-    # keep chain files
-    if cfg["keep_chain"]:
-        logger.info("Keeping chain files")
-        for sample_pair in sample_pairs:
-            chain_file = f"{JOB_DIR}/chain/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.chain"
-            shutil.copy2(chain_file, f"{cfg["prefix"]}/chain/{sample_pair[0]['sample']}__{sample_pair[1]['sample']}.chain")
+        # reference genome mode: anchor all query samples to reference
+        reference_sample = samples[0]
+        for sample_pair in tqdm(sample_pairs, desc="Anchoring TRs"):
+            query_sample = sample_pair[1]
+            logger.info(f"Anchoring {query_sample['sample']} to {reference_sample['sample']}")
+            updated_anno = anchor_tr(reference_sample, query_sample, flank_len=flank_len)
+            # Update the annotation in the sample dict
+            query_sample["annotation"] = updated_anno
+    else:
+        # all-to-all mode: need to build a graph of matches and resolve conflicts
+        logger.info("All-to-all mode: building TR anchor graph")
+        # For simplicity, we'll anchor each pair independently
+        # In a more sophisticated implementation, we'd use a graph algorithm
+        # to resolve multi-way matches
+        # Create a mapping from sample name to sample dict for easy lookup
+        sample_dict = {s["sample"]: s for s in samples}
+        for sample_pair in tqdm(sample_pairs, desc="Anchoring TRs"):
+            r_sample_name = sample_pair[0]["sample"]
+            q_sample_name = sample_pair[1]["sample"]
+            logger.info(f"Anchoring {q_sample_name} to {r_sample_name}")
+            updated_anno = anchor_tr(sample_pair[0], sample_pair[1], flank_len=flank_len)
+            # Update the annotation in the original samples list
+            sample_dict[q_sample_name]["annotation"] = updated_anno
+    
+    # Merge all annotations
+    logger.info("Merging annotations from all samples")
+    all_annotations = []
+    for sample in samples:
+        anno = sample["annotation"]
+        all_annotations.append(anno)
+    
+    merged_anno = pl.concat(all_annotations)
+    
+    # Write output files
+    output_file = f"{PREFIX}/integrated_trs.tsv"
+    logger.info(f"Writing integrated TRs to {output_file}")
+    merged_anno.write_csv(output_file, separator="\t")
+    
+    # Generate statistics
+    total_trs = len(merged_anno)
+    unique_ids = merged_anno["id"].n_unique()
+    samples_count = merged_anno["sample"].n_unique()
+    
+    logger.info(f"Integration complete:")
+    logger.info(f"  Total TRs: {total_trs}")
+    logger.info(f"  Unique anchored IDs: {unique_ids}")
+    logger.info(f"  Samples: {samples_count}")
+    
+    # Write statistics file
+    stats_file = f"{PREFIX}/integration_stats.txt"
+    with open(stats_file, "w") as f:
+        f.write(f"Total TRs: {total_trs}\n")
+        f.write(f"Unique anchored IDs: {unique_ids}\n")
+        f.write(f"Number of samples: {samples_count}\n")
+        f.write(f"Average TRs per sample: {total_trs / samples_count:.2f}\n")
 
     logger.info("Bye.")
 
     # copy log file
     shutil.copy2(f"{JOB_DIR}/log.log", f"{cfg["prefix"]}.log")
-
-    logging.shutdown()
-    
-    # remove temporary files
-    if not cfg["debug"]:
-        shutil.rmtree(JOB_DIR)

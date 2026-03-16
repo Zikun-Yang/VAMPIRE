@@ -1,19 +1,20 @@
-# generator.py
-def run_generator(args, parser):
-    '''
+from typing import Any
 
-    version: 0.1.0
+def run_generator(cfg: dict[str, Any]) -> None:
+    '''
     description: generate tandem repeat sequences
     Isnput:
-        motifs, length, mutation rate, seed
-    output:
-        prefix (tandem repeat sequences in fasta format, annotation in tsv format)
+        motifs: list[str]
+        length: int
+        mutation_rate: float
+        seed: int
+        prefix: str
     '''
 
     from vampire.generator_utils import TR_singleMotif, TR_multiMotif
 
-    motif_list_len = len(args.motifs)
-    motifs = args.motifs
+    motif_list_len = len(cfg['motifs'])
+    motifs = cfg['motifs']
 
     # check invalid characters
     for motif in motifs:
@@ -21,8 +22,8 @@ def run_generator(args, parser):
             raise ValueError("ERROR: Invalid characters in motif!")
 
     if motif_list_len == 1:
-        tr = TR_singleMotif(motifs[0], args.length, args.mutation_rate, args.seed)
+        tr = TR_singleMotif(motifs[0], cfg['length'], cfg['mutation_rate'], cfg['seed'])
     else:
-        tr = TR_multiMotif(motifs, args.length, args.mutation_rate, args.seed)
+        tr = TR_multiMotif(motifs, cfg['length'], cfg['mutation_rate'], cfg['seed'])
 
-    tr.save_seq_and_anno(args.prefix)
+    tr.save_seq_and_anno(cfg['prefix'])

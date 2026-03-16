@@ -38,57 +38,106 @@ class TR_singleMotif:
         
     def generate_seq(self):
         np.random.seed(self.seed)
-        # generate mutations
+
         mutation_num = int(self.mutation_rate * self.length)
+
         if mutation_num > 0:
-            mutation_types = ['sub','ins','del']
-            random_position = np.random.randint(0, int(self.length * 0.9), size = mutation_num)
-            random_type = np.random.choice(mutation_types, size = mutation_num)
-            random_shift = np.random.randint(0, 4, size = mutation_num)
-            mutation_df = pd.DataFrame({'position':random_position,
-                                    'type':random_type,
-                                    'shift':random_shift})
-            mutation_df = mutation_df.sort_values(by=['position'])
-            mutation_df = mutation_df.reset_index(drop=True)
+            mutation_types = np.array(['sub', 'ins', 'del'])
 
-        # generate annotation after mutation
-        motif_len = len(self.motif)
-        annotation_df = pd.DataFrame(columns=['start','end','motif','rep'])
-        cur = 0     # not include cur index
+            positions = np.random.randint(0, int(self.length * 0.9), size=mutation_num)
+            types = np.random.choice(mutation_types, size=mutation_num)
+            shifts = np.random.randint(0, 4, size=mutation_num)
+
+            order = np.argsort(positions)
+            positions = positions[order]
+            types = types[order]
+            shifts = shifts[order]
+
+            mutation_df = pd.DataFrame({
+                'position': positions,
+                'type': types,
+                'shift': shifts
+            })
+        else:
+            mutation_df = pd.DataFrame(columns=['position', 'type', 'shift'])
+            positions = np.array([])
+
         motif = self.motif
-        max_pos = max(mutation_df.loc[:,'position']) if mutation_num > 0 else -1
-        while cur <= max_pos:  
+        motif_len = len(motif)
+
+        annotation = []
+        seq_parts = []
+
+        cur = 0
+        max_pos = positions.max() if mutation_num > 0 else -1
+        m_idx = 0
+
+        while cur <= max_pos:
+
             pre_cur = cur
-            #print(mutation_df.loc[(mutation_df['position'] >= cur) and (mutation_df['position'] < cur + motif_len),])
-            while not mutation_df.loc[(mutation_df['position'] >= cur) & (mutation_df['position'] < cur + motif_len),].shape[0]:
-                cur += motif_len
-            rep = int((cur - pre_cur) / motif_len)
-            if rep:   # rep != 0
-                annotation_df.loc[annotation_df.shape[0]] = [pre_cur, cur, self.motif, rep]
-            ###print(cur)
-            # cur ~ cur + motif_len  has mutation in this region
-            mut_tmp = mutation_df.loc[(mutation_df['position'] >= cur) & (mutation_df['position'] < cur + motif_len),]
-            mut_tmp.loc[:,'position'] -= cur
+
+            while True:
+                if m_idx >= mutation_num:
+                    cur = max_pos + 1
+                    break
+
+                pos = positions[m_idx]
+
+                if pos < cur:
+                    m_idx += 1
+                    continue
+
+                if pos >= cur + motif_len:
+                    cur += motif_len
+                    continue
+
+                break
+
+            rep = (cur - pre_cur) // motif_len
+
+            if rep:
+                annotation.append((pre_cur, cur, motif, rep))
+                seq_parts.append(motif * rep)
+
+            if cur > max_pos:
+                break
+
+            mut_mask = (positions >= cur) & (positions < cur + motif_len)
+            mut_tmp = mutation_df.loc[mut_mask].copy()
+            mut_tmp.loc[:, 'position'] -= cur
+
             mut_motif = mute(motif, mut_tmp)
-            annotation_df.loc[annotation_df.shape[0]] = [cur, cur + len(mut_motif), mut_motif, 1]
+
+            annotation.append((cur, cur + len(mut_motif), mut_motif, 1))
+            seq_parts.append(mut_motif)
+
             cur += len(mut_motif)
-            #print(cur)
-        
-        # make up the tail of sequence
-        if cur != self.length:
-            rep = int((self.length - cur) / motif_len)
-            annotation_df.loc[annotation_df.shape[0]] = [cur, cur + motif_len * rep, motif, rep]
-            cur += motif_len * rep
-        if cur != self.length:
-            annotation_df.loc[annotation_df.shape[0]] = [cur, self.length, motif[:self.length - cur], 1]
 
-        # generate annotation before mutation
-        annotation_woMut_df = pd.DataFrame({'start' : [0], 'end' : [self.length], 'motif' : [self.motif], 'rep': [self.length / len(self.motif)]})
+        if cur != self.length:
+            rep = (self.length - cur) // motif_len
+            if rep:
+                annotation.append((cur, cur + motif_len * rep, motif, rep))
+                seq_parts.append(motif * rep)
+                cur += motif_len * rep
 
-        # generate sequence
-        seq = ''
-        for i in range(annotation_df.shape[0]):
-            seq += annotation_df.loc[i,'motif'] * int(annotation_df.loc[i,'rep'])
+        if cur != self.length:
+            tail = motif[:self.length - cur]
+            annotation.append((cur, self.length, tail, 1))
+            seq_parts.append(tail)
+
+        annotation_df = pd.DataFrame(
+            annotation,
+            columns=['start', 'end', 'motif', 'rep']
+        )
+
+        annotation_woMut_df = pd.DataFrame({
+            'start': [0],
+            'end': [self.length],
+            'motif': [self.motif],
+            'rep': [self.length / motif_len]
+        })
+
+        seq = ''.join(seq_parts)
 
         return seq, annotation_df, annotation_woMut_df
 

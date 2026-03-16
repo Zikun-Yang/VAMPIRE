@@ -84,6 +84,7 @@ def make_stats(params: dict) -> dict:
                 "MIN_SMOOTHNESS_SCORE": params["min_smoothness"],
                 "ALIGNMENT_PARAMETERS": f"{params['match_score']}, {params['mismatch_penalty']}, {params['gap_open_penalty']}, {params['gap_extend_penalty']}",
                 "MIN_ALIGNMENT_SCORE": params["min_score"],
+                "MIN_COPY_NUMBER": params["min_copy"],
                 "NUMBER_OF_RAW_TRS": get_number_of_raw_trs(params["job_dir"]),
                 "NUMBER_OF_POLISHED_TRS": get_number_of_polished_trs(params["job_dir"]),
                 "NUMBER_OF_FINAL_TRS": f"{df.height:,}",
@@ -101,7 +102,7 @@ def make_stats(params: dict) -> dict:
         case _:
             raise ValueError(f"Invalid subcommand: {params['subcommand']}")
     return data
-s
+
 def fig_to_html(fig: go.Figure) -> str:
     """
     Convert a figure to an HTML string
