@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Literal
 import numpy as np
 import polars as pl
 from plotly.colors import sample_colorscale, get_colorscale
@@ -940,3 +940,92 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
     ]   
 
     return colorscale
+
+def waterfall(
+    df: pl.DataFrame,
+    show_by: Literal["motif", "kmer"] = "motif",
+    k: int = 5,
+    color: str = "gray",
+    colormap: dict = None,
+) -> go.Figure:
+    """
+    Plot the waterfall plot
+    Input:
+        df: pl.DataFrame
+        show_by: Literal["motif", "kmer"]
+        k: int
+        color: str
+        colormap: dict
+    Output:
+        fig: go.Figure
+    """
+    # give seq index (y-axis)
+    seq_df = (
+        df.select("seq")
+        .unique()
+        .with_row_count("y")   # seq → y index
+    )
+
+    df = df.join(seq_df, on="seq")
+
+    height = 0.8
+
+    # compute hover data (fully vectorized)
+    df = df.with_columns([
+        ((pl.col("start") + pl.col("end")) / 2).alias("hover_x"),
+        (pl.col("y") + height / 2).alias("hover_y"),
+        pl.format(
+            "seq: {}<br>motif: {}<br>start: {}<br>end: {}<br>rep: {}<br>motif_len: {}",
+            pl.col("seq"),
+            pl.col("motif"),
+            pl.col("start"),
+            pl.col("end"),
+            pl.col("rep"),
+            pl.col("motif_len")
+        ).alias("hover_text")
+    ])
+
+    # construct shapes (unavoidable to convert to Python)
+    shapes = [
+        dict(
+            type="rect",
+            x0=row["start"],
+            x1=row["end"],
+            y0=row["y"],
+            y1=row["y"] + height,
+            fillcolor=colormap.get(row["motif"], "gray"),
+            line=dict(width=0),
+        )
+        for row in df.select(["start", "end", "y", "motif"]).to_dicts()
+    ]
+
+    # construct hover scatter (fully vectorized)
+    fig = go.Figure()
+
+    fig.update_layout(shapes=shapes)
+
+    fig.add_trace(go.Scatter(
+        x=df["hover_x"].to_list(),
+        y=df["hover_y"].to_list(),
+        mode="markers",
+        marker=dict(size=6, opacity=0),  # transparent
+        text=df["hover_text"].to_list(),
+        hoverinfo="text"
+    ))
+
+    # update y-axis labels
+    fig.update_yaxes(
+        tickmode='array',
+        tickvals=seq_df["y"].to_list(),
+        ticktext=seq_df["seq"].to_list()
+    )
+
+    fig.update_layout(
+        title="Repeat Structure",
+        xaxis_title="Copy Number / Position",
+        yaxis_title="Sample",
+        template="simple_white",
+        height=600 + df["seq"].n_unique() * 20
+    )
+
+    return fig
