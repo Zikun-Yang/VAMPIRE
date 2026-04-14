@@ -41,19 +41,20 @@ def ops_to_cigar(ops: List[str], m: int) -> str:
     """
     cigar: List[str] = []
     last_op: Optional[str] = None
-    cur_pos: int = 0
-    count: int = 0
+    cur_pos: int = 0 # current position in the motif, 0-based
+    count: int = 0 # length of the current operation
 
     for op in ops:
         if last_op is None:
             last_op = op
-            cur_pos += 1
+            if op != 'I':
+                cur_pos += 1
             count = 1
         elif op == last_op:
             count += 1
             if op != 'I':
                 cur_pos += 1
-        else:
+        else: # a new ops
             cigar.append(f"{count}{last_op}")
             last_op = op
             count = 1
@@ -62,8 +63,8 @@ def ops_to_cigar(ops: List[str], m: int) -> str:
         # motif wrap
         if cur_pos == m:
             cigar.append(f"{count}{last_op}/")
-            cur_pos = 0
             last_op = None
+            cur_pos = 0
             count = 0
     if last_op is not None:
         cigar.append(f"{count}{last_op}")
@@ -79,15 +80,22 @@ def get_copy_number(cigar: str, m: int) -> float:
     Outputs:
         copy number : float, complete copies + fractional last copy
     """
-    complete_num = cigar.count("/")
-    last_copy_cigar = cigar.split("/")[-1]
-    last_copy_length = 0.0
-    num = ""
+    complete_num: int = cigar.count("/")
+    last_copy_cigar: str = cigar.split("/")[-1]
+    last_copy_length: float = 0.0
+    num: str = ""
     for op in last_copy_cigar:
         if op.isdigit():
             num += op
         elif op in ["=", "X", "D"]:
             last_copy_length += int(num)
             num = ""
-    cn = round(last_copy_length / m + complete_num, 1)
+        elif op == "I":
+            num = ""
+    
+    if m == 0:
+        return round(float(complete_num), 1)
+    
+    cn: float = round(last_copy_length / m + complete_num, 1)
+
     return cn

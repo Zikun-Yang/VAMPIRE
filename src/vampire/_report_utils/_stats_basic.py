@@ -114,8 +114,8 @@ def get_number_of_raw_trs(job_dir: str) -> int:
         if filepath.stat().st_size == 0:
             logger.debug(f"Skipping empty file: {filepath}")
             continue
-        lf = pl.scan_csv(filepath, separator="\t", has_header=False)
-        n_rows = lf.collect().height
+        lf = pl.scan_csv(filepath, separator="\t", has_header=False, infer_schema_length=0)
+        n_rows = lf.select(pl.len()).collect().item()
         number += n_rows
     return f"{number:,}"
 
@@ -133,8 +133,8 @@ def get_number_of_polished_trs(job_dir: str) -> int:
         if filepath.stat().st_size == 0:
             logger.debug(f"Skipping empty file: {filepath}")
             continue
-        lf = pl.scan_csv(filepath, separator="\t", has_header=False)
-        n_rows = lf.collect().height
+        lf = pl.scan_csv(filepath, separator="\t", has_header=False, infer_schema_length=0)
+        n_rows = lf.select(pl.len()).collect().item()
         number += n_rows
     return f"{number:,}"
 

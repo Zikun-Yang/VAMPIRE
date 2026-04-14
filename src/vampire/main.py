@@ -3,7 +3,7 @@ import logging
 import time
 import shutil
 from pathlib import Path
-from typing import List, Any
+from typing import List, Any, Dict
 
 def _parse_int_list(s: str) -> List[int]:
     return [int(x) for x in s.split(",")]
@@ -11,7 +11,7 @@ def _parse_int_list(s: str) -> List[int]:
 def main():
     parser = argparse.ArgumentParser(
         prog='vampire',
-        description='🧛 VAMPIRE: comprehensive tool for annotating the motif variation and complex patterns in tandem repeats.'
+        description='🧛 VAMPIRE: Comprehensive tool for annotating the motif variation and complex patterns in tandem repeats.'
     )
 
     subparsers = parser.add_subparsers(title='subcommands', dest='command')
@@ -25,7 +25,7 @@ def main():
                                                     'Usage: vampire scan [options] <input.fa> <output_prefix>\n'
                                                     'For example: vampire scan <input.fa> <output_prefix>\n',
                                         formatter_class=argparse.RawTextHelpFormatter,
-                                        help='scan tandem repeats on genome')
+                                        help='Scan and annotate tandem repeats on genome')
     # I/O Options
     file_group = parser_scan.add_argument_group('I/O Options')
     file_group.add_argument("input", type=str, help='Input FASTA file to scan TRs')
@@ -69,7 +69,7 @@ def main():
                                                     'Usage: vampire integrate [options] <input.tsv> <output_prefix>\n'
                                                     'For example: vampire integrate --reference <input.tsv> <output_prefix>\n',
                                         formatter_class=argparse.RawTextHelpFormatter,
-                                        help='integrate tandem repeats across samples')
+                                        help='Integrate tandem repeats across samples')
     
     # I/O Options
     file_group = parser_integrate.add_argument_group('I/O Options')
@@ -99,24 +99,24 @@ def main():
     # ------------------------------------------------------------
     parser_anno = subparsers.add_parser('anno',
                                         description='VAMPIRE anno\n'
-                                                    'Usage: vampire anno [--auto] [options] [input.fa] [output_prefix]\n'
-                                                    'For example: vampire anno --auto [input.fa] [output_prefix]\n'
-                                                    '             vampire anno -k 13 -s 15 [CEN1.fa] [output_prefix]\n',
+                                                    'Usage: vampire anno [options] <input.fa> <output_prefix>\n'
+                                                    'For example: vampire anno --auto <input.fa> <output_prefix>\n'
+                                                    '             vampire anno -k 13 --score 15 <CEN1.fa> <output_prefix>\n',
                                         formatter_class=argparse.RawTextHelpFormatter,
-                                        help='annotate tandem repeat sequences')
+                                        help='Annotate single tandem repeat locus')
 
     # I/O Options
     file_group = parser_anno.add_argument_group('I/O Options')
-    file_group.add_argument('input', help='Input FASTA file you want to annotate')
-    file_group.add_argument('prefix', help='Output prefix')
+    file_group.add_argument('input', type=str, help='Input FASTA file to annotate')
+    file_group.add_argument('prefix', type=str, help='Output prefix')
 
     # General Options
     general_group = parser_anno.add_argument_group('General Options')
-    general_group.add_argument('-t', '--thread', '--threads', dest="threads", type=int, default=1, help='Number of threads [1]')
-    general_group.add_argument('--AUTO', '--auto', dest="AUTO", action='store_true', help='Automatically estimate parameters [False]')
-    general_group.add_argument('--debug', action='store_true', help='Output running time of each module [False]')
-    general_group.add_argument('--window-length', type=int, default=5000, help='Parallel window size [5000]')
-    general_group.add_argument('--overlap-length', type=int, default=1000, help='Windows overlap size [1000]')
+    general_group.add_argument('-t', '--thread', '--threads', dest="threads", type=int, default=4, help='Number of threads [4]')
+    general_group.add_argument('--auto', action='store_true', help='Automatically estimate k-mer size and related parameters [False]')
+    general_group.add_argument('--debug', action='store_true', help='Output debug info and keep temporary files [False]')
+    general_group.add_argument('--seq-win-size', type=int, default=5000, help='Parallel window size (bp) [5000]')
+    general_group.add_argument('--seq-ovlp-size', type=int, default=1000, help='Overlap between consecutive windows (bp) [1000]')
     general_group.add_argument('-r', '--resource', type=int, default=50, help='Memory limit (GB) [50]')
 
     # Decomposition Options
@@ -126,33 +126,31 @@ def main():
     decompose_group.add_argument('-n', '--motifnum', type=int, default=30, help='Maximum number of motifs [30]')
     decompose_group.add_argument('--abud-threshold', type=float, default=0.01, help='Minimum threshold compared with top edge weight [0.01]')
     decompose_group.add_argument('--abud-min', type=int, default=3, help='Minimum edge weight in De Bruijn graph [3]')
-    decompose_group.add_argument('--plot', action='store_true', help='Paint De Bruijn graph for each window [False]')
     decompose_group.add_argument('--no-denovo', action='store_true', help='Do not de novo find motifs, use reference motifs to annotate [False]')
 
     # Annotation Options
     annotation_group = parser_anno.add_argument_group('Annotation Options')
-    annotation_group.add_argument('-f', '--force', action='store_true', help='Add reference motifs into annotation [False]')
-    annotation_group.add_argument('--annotation-dist-ratio', type=float, default=0.4, help='Max distance to map = 0.4 * motif length [0.4]')
-    annotation_group.add_argument('--finding-dist-ratio', type=float, default=0.2, help='Max distance to query in reference motif set = 0.2 * motif length [0.2]')
-    annotation_group.add_argument('--match-score', type=float, default=1, help='Score per matched base [1]')
-    annotation_group.add_argument('--lendif-penalty', type=float, default=0.01, help='Penalty for length difference [0.01]')
-    annotation_group.add_argument('--gap-penalty', type=float, default=1, help='Penalty per skipped base [1]')
-    annotation_group.add_argument('--distance_penalty', type=float, default=1.5, help='Penalty per distance [1.5]')
-    annotation_group.add_argument('--perfect-bonus', type=float, default=0.5, help='Bonus for perfect match [0.5]')
+    annotation_group.add_argument('-f', '--force', action='store_true', help='Add reference motifs into annotation module [False]')
+    annotation_group.add_argument('--annotation-min-similarity', type=float, default=0.6, help='Min motif similarity to annotate [0.6]')
+    annotation_group.add_argument('--finding-min-similarity', type=float, default=0.8, help='Min motif similarity to match a query in reference motif set [0.8]') # TODO: not used in anno.py
+    annotation_group.add_argument("--match-score", type=int, default=2, help="Match score for alignment [2]")
+    annotation_group.add_argument("--mismatch-penalty", type=int, default=7, help="Mismatch penalty for alignment [7]")
+    annotation_group.add_argument("--gap-open-penalty", type=int, default=7, help="Gap open penalty for alignment [7]")
+    annotation_group.add_argument("--gap-extend-penalty", type=int, default=7, help="Gap extend penalty for alignment [7]")
 
     # Output Options
     output_group = parser_anno.add_argument_group('Output Options')
-    output_group.add_argument('--quiet', action='store_true', help="Don't output thread completion info")
-    output_group.add_argument('-s', '--score', type=float, default=5, help='Minimum output score [5]')
+    output_group.add_argument("--skip-report", action="store_true", default=False, help="Skip HTML report generation [False]")
+    output_group.add_argument('-s', '--min-score', dest='min_score', type=float, default=5, help='Minimum row score for concise.tsv output [5]')
 
     # ------------------------------------------------------------
     # generator
     # ------------------------------------------------------------
     parser_generator = subparsers.add_parser('generator',
                                             description='VAMPIRE generator\n'
-                                                        'Usage: vampire generator -m [motif] -l [length] -r [mutation_rate] -s [seed] -p [output_prefix]\n'
-                                                        'For example: vampire generator -m "GGC" -l 1000 -r 0 -p [output_prefix]\n'
-                                                        '             vampire generator -m "GGC" "GGT" -l 1000 -r 0 -p [output_prefix]\n',
+                                                        'Usage: vampire generator -m <motif> -l <length> -r <mutation_rate> -s <seed> -p <prefix>\n'
+                                                        'For example: vampire generator -m GGC -l 1000 -r 0 -p <prefix>\n'
+                                                        '             vampire generator -m GGC GGT -l 1000 -r 0 -p <prefix>\n',
                                             formatter_class=argparse.RawTextHelpFormatter,
                                             help='Generate tandem repeat sequences from reference motifs')
     parser_generator.add_argument('-m', '--motifs', required=True, type=str, nargs='+', help='Input motif(s)')
@@ -160,6 +158,7 @@ def main():
     parser_generator.add_argument('-r', '--mutation-rate', default=0, type=float, help='Mutation rate, 0 - 1')
     parser_generator.add_argument('-s', '--seed', default=42, type=int, help='Random seed, DEFAULT: 42')
     parser_generator.add_argument('-p', '--prefix', required=True, type=str, help='Output prefix')
+    parser_generator.add_argument('--debug', action='store_true', help='Output debug info [False]')
 
     # ------------------------------------------------------------
     # mkref

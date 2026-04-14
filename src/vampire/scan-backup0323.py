@@ -1,7 +1,4 @@
-from __future__ import annotations
-from os import pread
-from typing import TYPE_CHECKING
-from typing import List, Dict, Tuple, Any, Optional, Iterator, NamedTuple
+#! /usr/bin/env python3
 
 # data processing
 from math import sqrt
@@ -12,6 +9,8 @@ from numpy.lib.stride_tricks import sliding_window_view  # rolling median
 # multiprocessing
 from tqdm import tqdm
 from multiprocessing import Pool
+# type hints
+from typing import List, Dict, Tuple, Any, Optional
 # basic packages for file operations, logging
 import ast
 import csv
@@ -30,24 +29,12 @@ from vampire._report_utils import(
     calculate_alignment_metrics,
     calculate_nucleotide_composition
 )
-from vampire._utils import(
-    encode_seq_to_array,
-    decode_array_to_seq,
-    compress_homopolymers,
-    decompress_array,
-    encode_array_to_int,
-    decode_int_to_array,
-    canonicalize_motif,
-    is_periodic_seq,
-)
-
-logger = logging.getLogger(__name__)
 
 # type definitions, the coordinates are 0-based and closed interval
 Region = List[Any] # [win_id, chrom, start, end, ksizes, score, periods] : [int, str, int, int, List[int], float, List[Tuple(int, int)]]
 RegionWithMotifAndSeq = List[Any] # [win_id, chrom, start, end, ksizes, score, periods, seq, motifs] : [int, str, int, int, List[int], float, List[Tuple(int, int)], str, List[str]]
 
-
+logger = logging.getLogger(__name__)
 
 """
 #
@@ -65,11 +52,11 @@ def read_fasta(fasta_file: str) -> SeqIO.FastaIO:
     fasta = SeqIO.parse(fasta_file, "fasta")
     return fasta
 
-def split_fasta_by_window(fasta: Iterator[SeqRecord], seq_win_size: int, seq_ovlp_size: int, job_dir: str) -> List[str]:
+def split_fasta_by_window(fasta: list[SeqRecord], seq_win_size: int, seq_ovlp_size: int, job_dir: str) -> List[str]:
     """
     Split fasta file into windows of the given size and overlap
     Input:
-        fasta: Iterator[SeqRecord]
+        fasta: list[SeqRecord]
         seq_win_size: int
         seq_ovlp_size: int
         job_dir: str
@@ -107,6 +94,250 @@ def split_fasta_by_window(fasta: Iterator[SeqRecord], seq_win_size: int, seq_ovl
 # codes for sequence processing utilities
 #
 """
+def encode_seq_to_array(seq: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Encode a sequence into an integer array with homopolymer compression.
+    A=0, C=1, G=2, T=3, N and other invalid characters are encoded as -1.
+    Homopolymer runs (poly-A/T/C/G) are collapsed.
+    Input:
+        seq: str, the sequence to encode
+    Output:
+        Tuple[np.ndarray, np.ndarray]: (compressed_encoded_seq, counts)
+        - compressed_encoded_seq: the encoded sequence with homopolymers collapsed
+        - counts: array representing the number of bases in each homopolymer run
+    Example:
+        "ATAAACG" -> (array([0,3,0,1,2]), array([1,1,3,1,1]))
+        which represents: A(1), T(1), A(3), C(1), G(1)
+    """
+    encoded_seq = ENCODE_TABLE[np.frombuffer(seq.encode(), dtype=np.uint8)]
+    return encoded_seq
+
+def decode_array_to_seq(encoded_seq: np.ndarray) -> str:
+    """
+    Decode an encoded sequence into a string
+    Input:
+        encoded_seq: np.ndarray, the encoded sequence, 0 - 3 for A, C, G, T, -1 is invalid
+    Output:
+        str, the decoded sequence
+    """
+    lut = np.array(['A', 'C', 'G', 'T'], dtype='<U1')
+    return ''.join(lut[encoded_seq])
+
+@numba.njit(cache=True)
+def compress_homopolymers(encoded_seq: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compress homopolymer runs in an encoded sequence and return compressed sequence with counts.
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        np.ndarray, compressed sequence with homopolymers collapsed
+        np.ndarray, counts for each base in compressed sequence
+    """
+    n = len(encoded_seq)
+    if n == 0:
+        return np.empty(0, dtype=np.int8), np.empty(0, dtype=np.int32)
+    
+    # Pre-allocate arrays (worst case: no compression, same size)
+    compressed = np.empty(n, dtype=np.int8)
+    counts = np.empty(n, dtype=np.int32)
+    
+    compressed_idx = 0
+    i = 0
+    
+    while i < n:
+        current_base = encoded_seq[i]
+        count = 1
+        
+        # Count consecutive identical bases (including invalid bases as separate)
+        while i + count < n and encoded_seq[i + count] == current_base:
+            count += 1
+        
+        # Store compressed base and count
+        compressed[compressed_idx] = current_base
+        counts[compressed_idx] = count
+        compressed_idx += 1
+        i += count
+    
+    # Trim to actual size
+    return compressed[:compressed_idx], counts[:compressed_idx]
+
+@numba.njit(cache=True)
+def decompress_array(compressed_seq: np.ndarray, counts: np.ndarray) -> np.ndarray:
+    """
+    Decompress a compressed sequence and counts into an encoded sequence
+    Input:
+        compressed_seq: np.ndarray, compressed sequence
+        counts: np.ndarray, counts
+    Output:
+        np.ndarray, the decompressed encoded sequence
+    """
+    return np.repeat(compressed_seq, counts)
+
+@numba.njit(cache=True) # TODO CHANGE
+def encode_array_to_int_fast(encoded_seq: np.ndarray) -> np.int64:
+    """
+    Convert an encoded sequence (array) to an integer value for small k (k <= 31).
+    Uses numba for acceleration. A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        np.int64: the integer encoding of the encoded sequence, or -1 if invalid
+    Note:
+        Only works for k <= 31 (fits in int64). Returns -1 for invalid sequences.
+    """
+    k = len(encoded_seq)
+    if k > 31:
+        return -1  # cannot fit in int64
+    value = np.int64(0)
+    mask = (np.int64(1) << (2 * k)) - 1
+    for i in range(k):
+        b = encoded_seq[i]
+        if b == -1 or b < 0 or b > 3:
+            return -1
+        value = ((value << 2) | np.int64(b)) & mask
+    return value
+
+def encode_array_to_int(encoded_seq: np.ndarray) -> int | None: # TODO CHANGE
+    """
+    Convert an encoded sequence (array) to an integer value, A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        int | None: the integer encoding of the encoded sequence, or None if invalid
+    Note:
+        For k <= 31, uses numba-accelerated version. For k > 31, uses Python implementation.
+    """
+    k = len(encoded_seq)
+    if k <= 31:
+        result = encode_array_to_int_fast(encoded_seq)
+        return int(result) if result != -1 else None
+    else:
+        # for large k, use Python implementation
+        value = 0
+        mask = (1 << (2 * k)) - 1
+        for i, b in enumerate(encoded_seq):
+            if b == -1 or b < 0 or b > 3:
+                return None
+            value = ((value << 2) | int(b)) & mask
+        return value
+
+@numba.njit(cache=True)
+def decode_int_to_array_fast(value: np.int64, k: int) -> np.ndarray: # TODO CHANGE
+    """
+    Decode an integer value into an encoded sequence (array) for small k (k <= 31).
+    Uses numba for acceleration. A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        value: np.int64, the integer to decode
+        k: int, the length of the encoded sequence
+    Output:
+        np.ndarray, the decoded encoded sequence (array)
+    Note:
+        Only works for k <= 31 (fits in int64).
+    """
+    arr = np.empty(k, dtype=np.int8)
+    val = value
+    for i in range(k-1, -1, -1):
+        arr[i] = val & 3
+        val >>= 2
+    return arr
+
+def decode_int_to_array(value: int, k: int) -> np.ndarray: # TODO CHANGE
+    """
+    Decode an integer value into an encoded sequence (array), A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        value: int, the integer to decode
+        k: int, the length of the encoded sequence
+    Output:
+        np.ndarray, the decoded encoded sequence (array)
+    Note:
+        For k <= 31, uses numba-accelerated version. For k > 31, uses Python implementation.
+    """
+    if k <= 31:
+        return decode_int_to_array_fast(np.int64(value), k)
+    else:
+        # for large k, use Python implementation
+        arr = np.empty(k, dtype=np.int8)
+        val = value
+        for i in range(k-1, -1, -1):
+            arr[i] = val & 3
+            val >>= 2
+        return arr
+
+@numba.njit(cache=True)
+def canonicalize_motif(encoded_motif):
+    """
+    Canonicalize motif using Booth algorithm (O(n)).
+    Returns the lexicographically smallest cyclic rotation.
+    Input:
+        encoded_motif: np.ndarray, encoded motif (A=0, C=1, G=2, T=3)
+    Output:
+        np.ndarray: the canonicalized (lexicographically smallest) cyclic rotation
+    """
+    n = len(encoded_motif)
+    if n == 0:
+        return encoded_motif
+
+    i, j, k = 0, 1, 0
+
+    while i < n and j < n and k < n:
+        a = encoded_motif[(i + k) % n]
+        b = encoded_motif[(j + k) % n]
+
+        if a == b:
+            k += 1
+        elif a > b:
+            i = i + k + 1
+            if i <= j:
+                i = j + 1
+            k = 0
+        else:
+            j = j + k + 1
+            if j <= i:
+                j = i + 1
+            k = 0
+
+    start = i if i < j else j
+
+    res = np.empty(n, dtype=encoded_motif.dtype)
+    for t in range(n):
+        res[t] = encoded_motif[(start + t) % n]
+
+    return res
+
+@numba.njit(cache=True)
+def is_periodic_seq(encoded_seq: np.ndarray) -> Tuple[bool, int]:
+    """
+    Check if a encoded sequence is periodic
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3)
+    Output:
+        bool: True if the encoded sequence is periodic
+        int: the minimal period of the encoded sequence
+    """
+    k = len(encoded_seq)
+
+    if k <= 1:
+        return False, k
+
+    # prefix function
+    pi = np.zeros(k, dtype=np.int32)
+
+    j = 0 # j is the length of the longest proper prefix of the substring
+    for i in range(1, k): # i is the current position in the sequence
+        while j > 0 and encoded_seq[i] != encoded_seq[j]:
+            j = pi[j - 1]
+
+        if encoded_seq[i] == encoded_seq[j]:
+            j += 1
+
+        pi[i] = j
+
+    period = k - pi[k - 1]
+
+    is_periodic = period < k and k % period == 0
+
+    return is_periodic, period
+
 def get_most_frequent_kmer(encoded_seq: np.ndarray, k: int) -> Tuple[np.ndarray | None, int]:
     """
     Get the most frequent canonical k-mer in the sequence
@@ -207,9 +438,7 @@ def get_most_frequent_kmer(encoded_seq: np.ndarray, k: int) -> Tuple[np.ndarray 
                     break
 
         # fallback: if all k-mers are periodic, return the most frequent k-mer # TODO: could be improved
-        if mf_canonical_kmer_int is None:
-            if not counts:
-                return None, 0
+        if mf_canonical_kmer_int is None and counts:
             mf_canonical_kmer_int = max(counts.items(), key=lambda x: x[1])[0]
             mf_count = counts[mf_canonical_kmer_int]
 
@@ -320,58 +549,18 @@ def get_most_frequent_kmer(encoded_seq: np.ndarray, k: int) -> Tuple[np.ndarray 
 
     return mf_array, mf_count
 
-def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> int:
-    """
-    Calculate the edit distance between two motifs
-    Input:
-        motif_i: np.ndarray
-        motif_j: np.ndarray
-    Output:
-        edit_distance: int
-    """
-    # m1 is the longer motif
-    if len(m1) < len(m2):
-        m1, m2 = m2, m1
-
-    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
-        seq = m1,
-        motif = m2,
-        band_width = len(m2),
-        align_to_end = True,
-        anchor_row = -1, # no anchor
-        compare_row = -1, # no compare
-    )
-                
-    state: int= np.argmax(score_array[len(m1) - 1, :]) # 0 -> M, 1 -> I, 2 -> D
-    best_j: int = band_argmax_j[len(m1) - 1, state]
-
-    # calculate edit distance from traceback
-    ops, _, _ = traceback_banded_roll_motif(
-        trace_M = trace_M,
-        trace_I = trace_I,
-        trace_D = trace_D,
-        best_i = len(m1),
-        best_j = best_j,
-        m = len(m2),
-        seq = m1,
-        motif = m2
-    )
-    # count edit operations: 'X' (mismatch), 'I' (insertion), 'D' (deletion)
-    edit_distance = sum(1 for op in ops if op in ['X', 'I', 'D'])
-    return edit_distance
-
-
 """
 #
 # codes for calling repeats
 #
 """
 # main entry
-def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
+def call_regions(task: Tuple[str, str, List[int], int, int, int]) -> str:
     """
     Call the nonoverlapped tandem repeat regions for the given sequence
     Input:
-        task: Tuple[str, List[int], int, int, int, int], includes:
+        task: Tuple[str, str, List[int], int, int, int, int], includes:
+            job_dir: str, job directory path
             window_filepath: str, window file path
             ksizes: list[int], ksize list
             max_dist: int, maximum distance to call regions
@@ -381,7 +570,7 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
         result: str, raw region file path, the format is:
             List[window_id, chrom, start, end, k, score, period], start and end are 1-based and include the borders
     """
-    window_filepath, ksizes, max_dist, score_vision_size, min_smoothness = task
+    job_dir, window_filepath, ksizes, max_dist, score_vision_size, min_smoothness = task
     # read window information
     csv.field_size_limit(1024 * 1024 * 1024)  # set as 1 GB to avoid overflow
     with open(window_filepath, 'r', newline='', encoding='utf-8') as f:
@@ -391,12 +580,11 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
     win_start, win_end = int(win_start), int(win_end)
     encoded_seq = encode_seq_to_array(seq)
     win = (win_id, chrom, win_start, win_end, encoded_seq)
-    del seq
 
     # call raw regions
-    raw_rgns: List[Region] = call_raw_rgns(win, ksizes, max_dist, score_vision_size, min_smoothness)
+    raw_rgns: List[Region] = call_raw_rgns(job_dir, win, ksizes, max_dist, score_vision_size, min_smoothness)
     logger.debug(f"window {win_id}: call_raw_rgns finished")
-
+    
     # if no raw regions found, return None
     if not raw_rgns:
         return None
@@ -406,7 +594,6 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
 
     # merge overlapped or contained raw regions, merge k into list, use max score
     merged_rgns: List[Region] = merge_rgns(raw_rgns, include_offset=True)
-    del raw_rgns
     logger.debug(f"window {win_id}: merge_rgns finished")
 
     # return None if no merged regions
@@ -416,18 +603,30 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
     # remove concatemer motifs
     merged_rgns = remove_concatemer(merged_rgns, encoded_seq)
     logger.debug(f"window {win_id}: remove_concatemer finished")
+    """
+    for rgn in merged_rgns:
+        print(f"raw merged region: {rgn}")
+    #"""
 
     # write merged raw regions to file
-    output_filepath = f"{JOB_DIR}/raw_rgns/window_{win_id}.tsv"
+    output_filepath = f"{job_dir}/raw_rgns/window_{win_id}.tsv"
     with open(output_filepath, 'w', newline='', encoding='utf-8') as fi:
         writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
+        """
+        tmp = [[rgn[0], 
+                rgn[1], 
+                encoded_to_raw_start_coord[rgn[2]], 
+                encoded_to_raw_end_coord[rgn[3]], 
+                rgn[4], 
+                rgn[5], 
+                rgn[6]] for rgn in merged_rgns]
+        """
         writer.writerows(merged_rgns)
     logger.debug(f"window {win_id}: write_raw_rgns finished")
     ### logger.info(f"debug ! merged_rgns: {merged_rgns}") # TODO
 
     # polish region borders
     polished_rgns: List[Region] = polish_rgns(merged_rgns, win)
-    del merged_rgns
     logger.debug(f"window {win_id}: polish_rgns finished")
 
     # sort by coordinates
@@ -435,12 +634,10 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
 
     # merge overlapped polished regions
     merged_rgns: List[Region] = merge_rgns(polished_rgns, include_offset=False)
-    del polished_rgns
     logger.debug(f"window {win_id}: merge_rgns finished")
 
     # filter polished regions that are too short
     final_rgns: List[Region] = list(filter(lambda x: x[3] - x[2] + 1 >= MIN_LEN, merged_rgns))
-    del merged_rgns
     logger.debug(f"window {win_id}: filter_rgns finished, total {len(final_rgns)} regions left")
     
     # remove concatemer motifs
@@ -449,11 +646,10 @@ def call_regions(task: Tuple[str, List[int], int, int, int]) -> str:
 
     # get motif and sequence, transform 0-based coordinates (closed interval) to 1-based global coordinates (closed interval)
     rgns_with_motif_and_seq: List[RegionWithMotifAndSeq] = get_motif_and_seq(final_rgns, win)
-    del final_rgns, win
     logger.debug(f"window {win_id}: get_motif_and_seq finished")
 
     # write polished regions to file
-    output_filepath = f"{JOB_DIR}/polished_rgns/window_{win_id}.tsv"
+    output_filepath = f"{job_dir}/polished_rgns/window_{win_id}.tsv"
     with open(output_filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t', lineterminator='\n')
         writer.writerows(rgns_with_motif_and_seq)
@@ -503,7 +699,7 @@ def get_most_frequent_period_tuple(period_tuples: List[Tuple[int, int]]) -> Tupl
 
 def merge_period_tuples(period_tuples1: List[Tuple[int, int]], period_tuples2: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     """
-    Merge two lists of period tuples, sorted by length from long to short
+    Merge two lists of period tuples
     Input:
         period_tuples1: List[Tuple[int, int]]
         period_tuples2: List[Tuple[int, int]]
@@ -521,7 +717,7 @@ def merge_period_tuples(period_tuples1: List[Tuple[int, int]], period_tuples2: L
             period_dict[period] += length
         else:
             period_dict[period] = length
-    return sorted([(p, l) for p, l in period_dict.items()], key=lambda x: -x[1])
+    return sorted([(p, l) for p, l in period_dict.items()])
 
 @numba.njit(cache=True)
 def _get_largest_confident_period_by_k(k: int, alpha: float = 0.1) -> int:
@@ -723,6 +919,7 @@ def is_possible_concatemer(period1: int, period2: int, threshold: float = 0.2) -
 
 # Step 1: call raw regions
 def call_on_compressed(
+    job_dir: str, 
     win: Tuple[int, str, int, int, np.ndarray],
     ksize: int, 
     max_dist: int, 
@@ -732,6 +929,7 @@ def call_on_compressed(
     """
     Call the raw regions for the given sequence
     Input:
+        job_dir: str, job directory path
         win: Tuple[int, str, int, int, np.ndarray]
         ksize: int
         max_dist: int, maximum distance to call regions
@@ -750,9 +948,7 @@ def call_on_compressed(
     
     # calculate distance on compressed sequence
     dist = calculate_distance(compressed_seq, ksize, min(largest_confident_period, max_dist))
-    del compressed_seq, compressed_counts
     log_dist = np.log(dist) # distance >= 1
-    del dist
 
     # calculate smoothness score using rolling window
     n = len(log_dist)
@@ -764,13 +960,11 @@ def call_on_compressed(
         np.pad(log_dist, (score_vision_size//2, score_vision_size//2), mode='reflect'),
         window_shape=score_vision_size
     )
-    del log_dist
     # calculate median of each window
     rolling_median = np.median(windows, axis=1)
     # calculate MAD
     abs_dev = np.abs(windows - rolling_median[:, np.newaxis])
     rolling_mad = np.median(abs_dev, axis=1)
-    del windows, abs_dev
     # avoid division by zero, if rolling_median is 0, set robust_cv to 0
     with np.errstate(divide='ignore', invalid='ignore'):
         robust_cv = np.where(rolling_median != 0, 
@@ -781,15 +975,12 @@ def call_on_compressed(
     smoothness_score = 1.0 / (robust_cv + alpha) * alpha * 100
     smoothness_score = np.nan_to_num(smoothness_score, nan=0.0)
     smoothness_score = np.round(smoothness_score).astype(np.int32)
-    del rolling_mad, rolling_median, robust_cv
 
     # record smoothness distribution
-    """
     distribution = np.bincount(smoothness_score, minlength = 101)
-    with open(f"{JOB_DIR}/stats/smoothness_distribution_{ksize}.txt", 'a') as fi:
+    with open(f"{job_dir}/stats/smoothness_distribution_{ksize}.txt", 'a') as fi:
         writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
         writer.writerow(distribution)
-    """
     
     smoothness_score = np.nan_to_num(smoothness_score, nan=0.0)
     
@@ -801,8 +992,7 @@ def call_on_compressed(
     diff = np.diff(padded.astype(int))
     starts = np.where(diff == 1)[0]     # switch 0 -> 1, 0-based coordinates (closed interval)
     ends = np.where(diff == -1)[0] - 1  # switch 1 -> 0, 0-based coordinates (closed interval)
-    del smoothness_score, above_threshold, padded, diff
-
+    
     # use raw sequence
     dist = calculate_distance(encoded_seq, ksize, min(largest_confident_period, max_dist)) # distance >= 1 have meaningful periodicity
     windows = sliding_window_view(
@@ -811,7 +1001,6 @@ def call_on_compressed(
     )
     # calculate median of each window
     rolling_median = np.median(windows, axis=1)
-    del windows
     starts = compressed_to_raw_start[starts]
     ends = compressed_to_raw_end[ends]
 
@@ -856,23 +1045,21 @@ def call_on_compressed(
         mode_dist = get_mode(region_dist)
         if mode_dist is None:
             continue
-        mode_dist_count: int = (region_dist == mode_dist).sum()
-        mode_dist_freq: float = mode_dist_count / float(len(region_dist))
+        mode_dist_freq = (region_dist == mode_dist).sum() / len(region_dist)
         secondary_mode_dist: int | None = None
         secondary_mode_dist_freq: float = 0.0
         if mode_dist_freq <= 0.5:
             region_dist = region_dist[region_dist != mode_dist]
             secondary_mode_dist = get_mode(region_dist)
             if secondary_mode_dist is not None:
-                secondary_mode_dist_count: int = (region_dist == secondary_mode_dist).sum()
-                secondary_mode_dist_freq: float = secondary_mode_dist_count / float(len(region_dist))
+                secondary_mode_dist_freq = (region_dist == secondary_mode_dist).sum() / len(region_dist)
         
         if mode_dist_freq + secondary_mode_dist_freq <= 0.5:
             continue
 
-        period_tuple = [(int(mode_dist), int(mode_dist_count))]
+        period_tuple = [(int(mode_dist), int(end_idx - start_idx + 1))]
         if secondary_mode_dist is not None:
-            period_tuple.append((int(secondary_mode_dist), int(secondary_mode_dist_count)))
+            period_tuple.append((int(secondary_mode_dist), int(end_idx - start_idx + 1)))
 
         ###print(f"rgn {start_idx}-{end_idx}, mode_distance {mode_dist}, distance {region_dist}")
         
@@ -921,6 +1108,7 @@ def call_on_compressed(
     return raw_rgns
 
 def call_on_encoded(
+    job_dir: str, 
     win: Tuple[int, str, int, int, np.ndarray],
     ksize: int, 
     max_dist: int, 
@@ -930,6 +1118,7 @@ def call_on_encoded(
     """
     Call the raw regions for the given sequence
     Input:
+        job_dir: str, job directory path
         win: Tuple[int, str, int, int, np.ndarray]
         ksize: int
         max_dist: int, maximum distance to call regions
@@ -957,27 +1146,25 @@ def call_on_encoded(
         np.pad(log_dist, (score_vision_size//2, score_vision_size//2), mode='reflect'),
         window_shape=score_vision_size
     )
-    del log_dist
     # calculate median of each window
     rolling_median = np.median(windows, axis=1)
     # calculate MAD
     abs_dev = np.abs(windows - rolling_median[:, np.newaxis])
     rolling_mad = np.median(abs_dev, axis=1)
-    del windows, abs_dev
     # avoid division by zero, if rolling_median is 0, set robust_cv to 0
     with np.errstate(divide='ignore', invalid='ignore'):
         robust_cv = np.where(rolling_median != 0, 
                             (rolling_mad * 1.4826) / rolling_median, 
                             0.0)
+    ### smoothness_score = 1.0 / (robust_cv + 0.01) # TODO, this metric decays too quickly, consider using a more gentle metric
     alpha = 0.1
     smoothness_score = 1.0 / (robust_cv + alpha) * alpha * 100
     smoothness_score = np.nan_to_num(smoothness_score, nan=0.0)
     smoothness_score = np.round(smoothness_score).astype(np.int32)
-    del rolling_mad, robust_cv
 
     # record smoothness distribution
     distribution = np.bincount(smoothness_score, minlength = 101)
-    with open(f"{JOB_DIR}/stats/smoothness_distribution_{ksize}.txt", 'a') as fi:
+    with open(f"{job_dir}/stats/smoothness_distribution_{ksize}.txt", 'a') as fi:
         writer = csv.writer(fi, delimiter='\t', lineterminator='\n')
         writer.writerow(distribution)
     
@@ -1015,7 +1202,6 @@ def call_on_encoded(
         # no regions to split
         starts = np.array([], dtype=np.int64)
         ends = np.array([], dtype=np.int64)
-    del rolling_median
     
     # call candidate regions
     for start_idx, end_idx in zip(starts, ends):
@@ -1071,6 +1257,7 @@ def call_on_encoded(
     return raw_rgns
 
 def call_raw_rgns(
+    job_dir: str, 
     win: Tuple[int, str, int, int, np.ndarray], 
     ksizes: List[int], 
     max_dist: int, 
@@ -1080,6 +1267,7 @@ def call_raw_rgns(
     """
     Call the raw regions for the given sequence
     Input:
+        job_dir: str, job directory path
         win: Tuple[int, str, int, int, np.ndarray]
         ksizes: List[int]
         max_dist: int, maximum distance to call regions
@@ -1091,9 +1279,9 @@ def call_raw_rgns(
     raw_rgns: List[Region] = []
 
     for ksize in ksizes:
-        t: List[Region] = call_on_compressed(win, ksize, max_dist, score_vision_size, min_smoothness)
-        raw_rgns.extend(t)
-        t: List[Region] = call_on_encoded(win, ksize, max_dist, score_vision_size, min_smoothness)
+        #t: List[Region] = call_on_compressed(job_dir, win, ksize, max_dist, score_vision_size, min_smoothness)
+        #raw_rgns.extend(t)
+        t: List[Region] = call_on_encoded(job_dir, win, ksize, max_dist, score_vision_size, min_smoothness)
         raw_rgns.extend(t)
 
     return raw_rgns
@@ -1147,6 +1335,43 @@ def merge_rgns(rgns: List[Region], include_offset: bool = False) -> List[Region]
 
     return merged_rgns
 
+def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> int:
+    """
+    Calculate the edit distance between two motifs
+    Input:
+        motif_i: np.ndarray
+        motif_j: np.ndarray
+    Output:
+        edit_distance: int
+    """
+    # m1 is the longer motif
+    if len(m1) < len(m2):
+        m1, m2 = m2, m1
+
+    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+        seq = m1,
+        motif = m2,
+        band_width = len(m2),
+        align_to_end = True
+    )
+                
+    state: int= np.argmax(score_array[len(m1) - 1, :]) # 0 -> M, 1 -> I, 2 -> D
+    best_j: int = band_argmax_j[len(m1) - 1, state]
+
+    # calculate edit distance from traceback
+    ops, _, _ = traceback_banded_roll_motif(
+        trace_M = trace_M,
+        trace_I = trace_I,
+        trace_D = trace_D,
+        best_i = len(m1),
+        best_j = best_j,
+        m = len(m2),
+        seq = m1,
+        motif = m2
+    )
+    # count edit operations: 'X' (mismatch), 'I' (insertion), 'D' (deletion)
+    edit_distance = sum(1 for op in ops if op in ['X', 'I', 'D'])
+    return edit_distance
 
 # Step 3: remove concatemer
 def remove_concatemer(rgns: List[Region], encoded_seq: np.ndarray) -> List[Region]:
@@ -1214,9 +1439,7 @@ def remove_concatemer(rgns: List[Region], encoded_seq: np.ndarray) -> List[Regio
 
         # reconstruct tuples with original lengths, sum lengths for same period
         period_dict: Dict[int, int] = {}
-        l_sum: int = 0
         for p, l in rgn[6]:
-            l_sum += l
             final_period = collapsed[p]
             if final_period in period_dict:
                 period_dict[final_period] += l
@@ -1224,21 +1447,13 @@ def remove_concatemer(rgns: List[Region], encoded_seq: np.ndarray) -> List[Regio
                 period_dict[final_period] = l
         
         # write collapsed periods back (was missing — rgn[6] never updated)
-        period_tuples: List[Tuple[int, int]] = sorted(
+        new_periods: List[Tuple[int, int]] = sorted(
             [(p, l) for p, l in period_dict.items()],
-            key=lambda x: -x[1],
+            key=lambda x: x[0],
         )
-        l_cur: int = 0
-        new_period_tuples: List[Tuple[int, int]] = []
-        for p, l in period_tuples:
-            l_cur += l
-            new_period_tuples.append((p, l))
-            if l_cur / float(l_sum) >= 0.8:
-                break
-
-        if len(new_period_tuples) >= 5:
-            new_period_tuples = new_period_tuples[:5]
-        rgns[idx][6] = new_period_tuples
+        if len(new_periods) == 0:
+            new_periods = list(rgn[6])
+        rgns[idx][6] = new_periods
 
     return rgns
 
@@ -1263,8 +1478,6 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, np.ndarray]) 
         included_start: int = max(0, rgn[2] - best_period)
         included_seq: np.ndarray = encoded_seq[included_start : included_end]
         ref_motif, _ = get_most_frequent_kmer(included_seq, best_period)
-        if ref_motif is None: # this may be due to the length of the region is too short
-            raise ValueError(f"ref_motif is None for region {rgn[1]}:{rgn[2]}-{rgn[3]}: {included_seq}")
         ref_motifs.append(ref_motif)
 
     idx: int = 0
@@ -1272,7 +1485,6 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, np.ndarray]) 
     cur_start: int | None = None
     cur_end: int | None = None
     cur_period: List[Tuple[int, int]] = []
-    cur_extended_idx: int = 0
     while idx < len(rgns):
         # get basic information
         rgn: Region = rgns[idx]
@@ -1293,11 +1505,6 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, np.ndarray]) 
             extend_len = extend_border(encoded_seq[extend_start : extend_end + 1][::-1], ref_motif[::-1], confirmed_tr_end, None)
             cur_start = max(0, rgn[3] - extend_len + 1)
             ###print(f" $$ ----- rgn {rgn[1]}:{rgn[2]}-{rgn[3]} cur_start: {cur_start}, extend_len: {extend_len}")
-        
-        # skip if already computed
-        if next_rgn is not None and cur_extended_idx >= next_rgn[2]:
-            idx += 1
-            continue
         
         # polish end
         included_start = cur_start
@@ -1330,6 +1537,24 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, np.ndarray]) 
             if is_highly_similar:
                 have_downstream = True
         
+        """
+        if have_downstream:
+            extend_end = min(next_rgn[3], seq_len - 1)
+            extend_start = max(included_start, rgn[3] - 10 * best_period) # TODO ???
+            extend_seq = encoded_seq[extend_start : extend_end + 1]
+            confirmed_tr_end = rgn[3] - extend_start + 1 # 1-based
+            extend_len = extend_border(extend_seq, ref_motif, True, confirmed_tr_end)
+
+            if extend_start + extend_len >= next_rgn[2]: # jump to next region
+                idx += 1
+                continue
+        
+        # do not have downstream, extend the border
+        extend_end = min(rgn[3] + MAX_EXTEND_LEN, seq_len - 1)
+        extend_start = max(included_start, rgn[3] - 10 * best_period) # TODO ???
+        extend_seq = encoded_seq[extend_start : extend_end + 1]
+        extend_len = extend_border(extend_seq, ref_motif, False, None)
+        """
         extend_end = min(rgn[3] + MAX_EXTEND_LEN, seq_len - 1)
         extend_start = max(included_start, rgn[3] - 10 * best_period) # TODO ???
         extend_seq = encoded_seq[extend_start : extend_end + 1]
@@ -1339,13 +1564,12 @@ def polish_rgns(rgns: List[Region], win: Tuple[int, str, int, int, np.ndarray]) 
             compared_tr_end = min(next_rgn[3] - extend_start + 1, len(extend_seq)) # 1-based
 
         extend_len = extend_border(extend_seq, ref_motif, confirmed_tr_end, compared_tr_end)
-        cur_extended_idx = extend_start + extend_len - 1
 
         ###print(f" $$ rgn {rgn[1]}:{rgn[2]}-{rgn[3]} extend_seq range: {extend_start}-{extend_end}, ref_motif: {decode_array_to_seq(ref_motif)}")
         ###print(f" $$ rgn {rgn[1]}:{rgn[2]}-{rgn[3]} cur_end: {extend_start + extend_len}, extend_len: {extend_len}")
         # record region
-        if cur_extended_idx < next_rgn[2]:
-            cur_end = cur_extended_idx
+        if extend_start + extend_len < next_rgn[2]:
+            cur_end = extend_start + extend_len - 1
             polished_rgns.append([win_id, chrom, cur_start, cur_end, rgn[4], rgn[5], cur_period])
             ###print(f" $$ rgn {rgn[1]}:{rgn[2]}-{rgn[3]} end extending")
             cur_start, cur_end, cur_period = None, None, []
@@ -1380,7 +1604,7 @@ def extend_border(
     if have_downstream:
         compare_row = compared_tr_end - 1
     else:
-        compare_row = -1
+        compare_row = -1  # Numba: no Optional; -1 disables downstream early-exit branch
 
     # align
     score_array, _, _, _, _ = banded_dp_align(
@@ -1391,18 +1615,13 @@ def extend_border(
         anchor_row = confirmed_tr_end - 1,
         compare_row = compare_row,
     )
-
+    
     if have_downstream and score_array[compared_tr_end - 1, :].max() >= score_array[confirmed_tr_end - 1, :].max():
-        ###print(f" $$ score_array: {score_array[:, 0]}")
-        ###print(f" $$ idx: {compared_tr_end - 1}, compared: {score_array[compared_tr_end - 1, :].max()}")
-        ###print(f" $$ idx: {confirmed_tr_end - 1}, confirmed: {score_array[confirmed_tr_end - 1, :].max()}")
-        end_i = compared_tr_end
+        ###score = score_array[-1, :].max()
+        end_i = seq_len
     else: # get the maximum score in the sequence
-        ###print(f" $$ idx: {score_array[:, 0].argmax() + 1}, max_score: {score_array[:, 0].max()}")
+        ###score = score_array[:, 0].max()
         end_i = score_array[:, 0].argmax() + 1
-        ###print(f" $$ score_array: {score_array[: end_i - 1, 0]}")
-        ###print(f" $$ score_array: {score_array[end_i: end_i * 2, 0]}")
-
 
     return end_i
 
@@ -1523,16 +1742,16 @@ def identify_region_across_windows(results: List[str], seq_win_size: int, seq_ov
             else:
                 cur_mid_rgns.append(row)
 
-        if active_rgn and cur_st_mid_rgn and _is_overlapped(active_rgn, cur_st_mid_rgn):
-            active_rgn = _merge_regions(active_rgn, cur_st_mid_rgn)
+        if active_rgn and cur_st_mid_rgn and is_overlapped(active_rgn, cur_st_mid_rgn):
+            active_rgn = merge_regions(active_rgn, cur_st_mid_rgn)
         elif cur_st_mid_rgn: # cannot extend, finalize the previous one
             if active_rgn:
                 across_win_rgns.append(active_rgn)
             active_rgn = cur_st_mid_rgn
 
         if cur_mid_end_rgn:
-            if active_rgn and _is_overlapped(active_rgn, cur_mid_end_rgn):
-                active_rgn = _merge_regions(active_rgn, cur_mid_end_rgn)
+            if active_rgn and is_overlapped(active_rgn, cur_mid_end_rgn):
+                active_rgn = merge_regions(active_rgn, cur_mid_end_rgn)
             else:
                 if active_rgn:
                     across_win_rgns.append(active_rgn)
@@ -1565,19 +1784,14 @@ def identify_region_across_windows(results: List[str], seq_win_size: int, seq_ov
         across_win_rgns.append(active_rgn)
     
     # write the linked regions to file
-    cot = 1
-    for rgn in across_win_rgns:
-        merged_filepath = f"{Path(results[0]).parent}/window_linked_{cot}.tsv"
-        with open(merged_filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f, delimiter='\t', lineterminator='\n')
-            writer.writerow(rgn)
-        cot += 1
+    merged_filepath = f"{Path(results[0]).parent}/window_linked.tsv"
+    with open(merged_filepath, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f, delimiter='\t', lineterminator='\n')
+        writer.writerows(across_win_rgns)
+            
+    return [merged_filepath] + results
 
-    new_filepath = [f"{Path(results[0]).parent}/window_linked_{cot}.tsv" for cot in range(1, cot)]
-    
-    return new_filepath + results
-
-def _is_overlapped(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> bool:
+def is_overlapped(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> bool:
     """
     Check if two regions have overlap
     Input:
@@ -1588,7 +1802,7 @@ def _is_overlapped(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> 
     """
     return rgn1[1] == rgn2[1] and max(rgn1[2], rgn2[2]) <= min(rgn1[3], rgn2[3])
 
-def _merge_regions(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> RegionWithMotifAndSeq:
+def merge_regions(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> RegionWithMotifAndSeq:
     """
     Merge two regions
     Input:
@@ -1611,34 +1825,18 @@ def _merge_regions(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> 
     else:
         overlap_len = e1 - s2 + 1
         merged_seq = seq1 + seq2[overlap_len:]
-    # merge periods
-    merged_period_tuples = merge_period_tuples(rgn1[6], rgn2[6])
-    # get top accumulate 80% periods
-    top_period_tuples = []
-    l_sum: int = sum(l for _, l in merged_period_tuples)
-    l_cur: int = 0
-    for p, l in merged_period_tuples:
-        l_cur += l
-        top_period_tuples.append((p, l))
-        if l_cur / float(l_sum) >= 0.8:
-            break
-    if len(top_period_tuples) > 5: # only keep the top 5 periods
-        top_period_tuples = top_period_tuples[:5]
-    motif_len_list = [p for p, _ in top_period_tuples]
-    # merge motifs
+    merged_motif_lens = list(set(rgn1[6] + rgn2[6]))
     merged_motifs = list(set(rgn1[8] + rgn2[8]))
-    top_motifs = [m for m in merged_motifs if len(m) in motif_len_list]
-
     return [
-        f"{rgn1[0]},{rgn2[0]}",
+        rgn1[0],
         rgn1[1],
         min(s1, s2),
         max(e1, e2),
         rgn1[4] + rgn2[4],
         rgn1[5],
-        top_period_tuples,
+        merged_motif_lens,
         merged_seq,
-        top_motifs
+        merged_motifs
     ]
 
 
@@ -1661,6 +1859,11 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
     """
     polished_rgn_path, output_filepath, format, min_score, min_copy = task
     csv.field_size_limit(1024 * 1024 * 1024)  # set as 1 GB to avoid overflow
+    with open(polished_rgn_path, 'r', newline='', encoding='utf-8') as fi:
+        reader = csv.reader(fi, delimiter='\t')
+        rows = list(reader)
+    output_rows: List[Any] = []
+
     match format:
         case "brief":
             HEADER = ["chrom", "start", "end", "period", "copyNumber",
@@ -1671,215 +1874,151 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
         case "bed": # bed12 + extra 12 columns
             HEADER = ["chrom", "start", "end", "motif", "pseudoScore", "strand", "thickStart", "thickEnd", "itemRgb", "blockCount", "blockSizes", "blockStarts",
                       "period", "copyNumber", "percentMatches", "percentIndels", "score", "A", "C", "G", "T", "entropy", "sequence", "cigar"]
-    
+
+    # start alignment for each region
+    for row in rows:
+        rgn_dict = {
+            "win_id": row[0],
+            "chrom": row[1],
+            "start": int(row[2]),
+            "end": int(row[3]),
+            "ksizes": row[4].translate(str.maketrans("", "", "[] ")),
+            "smoothness": row[5],
+            "periods": ast.literal_eval(row[6]),
+            "sequence": row[7],
+            "motifs": ast.literal_eval(row[8])
+        }
+        if format == "bed":
+            rgn_dict.update({
+                "pseudoScore": 1000,
+                "strand": ".",
+                "start": int(row[2]) - 1,
+                "thickStart": int(row[2]) - 1,
+                "thickEnd": int(row[3]),
+                "itemRgb": ".",
+                "blockCount": 1,
+                "blockSizes": int(row[3]) - int(row[2]),
+                "blockStarts": 0
+            })
+        max_score: int = 0
+        candidates: List[Tuple[int, np.ndarray, np.ndarray, np.ndarray, int, int, str]] = [] # score, trace_M, trace_I, trace_D, end_i, end_j, motif
+        encoded_seq = encode_seq_to_array(rgn_dict["sequence"])
+        seq_len = len(encoded_seq)
+        for motif in rgn_dict["motifs"]:
+            encoded_motif = encode_seq_to_array(motif)
+            score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+                seq = encoded_seq,
+                motif = encoded_motif,
+                band_width = MAX_PERIOD,
+                align_to_end = True
+            )
+            
+            score = score_array[seq_len - 1, :].max()
+            state = score_array[seq_len - 1, :].argmax()
+            end_i = len(encoded_seq) # 1-based
+            end_j = band_argmax_j[seq_len - 1, state]
+            # get motif profile
+            profile = traceback_motif_profile(trace_M, trace_I, trace_D, end_i, end_j, len(motif), encoded_seq)
+            # get refined motif and remove gaps
+            encoded_refined_motif = profile.argmax(axis=1)
+            encoded_refined_motif = encoded_refined_motif[encoded_refined_motif != 4]
+
+            # check the periodicity of the refined motif
+            is_periodic, period = is_periodic_seq(encoded_refined_motif)
+            if is_periodic:
+                encoded_refined_motif = encoded_refined_motif[:period] # get the minimal period
+            if len(encoded_refined_motif) == 0:
+                ###raise RuntimeError(f"Empty refined motif for region {row}, motif: {motif}, refined_motif: {encoded_refined_motif}")
+                continue
+
+            score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+                seq = encoded_seq,
+                motif = encoded_refined_motif,
+                band_width = MAX_PERIOD,
+                align_to_end = True
+            )
+            ###print(f"final alignment seq: {encoded_seq}, motif: {encoded_refined_motif}")
+            score = int(score_array[seq_len - 1:, 0]) # TODO only match? or indel is also ok?
+            end_i = seq_len # 1-based
+            end_j = band_argmax_j[seq_len - 1:, 0]
+            if score_array.size == 0:
+                raise RuntimeError(f"Empty alignment score array for region {row}")
+            if score >= max_score * SECONDARY_SCORE_RATIO:
+                ###print(f"score: {score}, motif: {decode_array_to_seq(encoded_refined_motif)}, end_i: {end_i}, end_j: {end_j}")
+                candidates.append((score, trace_M, trace_I, trace_D, end_i, end_j, encoded_refined_motif))
+                max_score = max(max_score, score)
+
+        if len(candidates) == 0:
+            continue
+
+        # skip the region if the score is too low
+        if max_score < min_score:
+            continue
+
+        # filter and sort candidates by score
+        candidates = [candidate for candidate in candidates if candidate[0] >= max_score * SECONDARY_SCORE_RATIO]
+        candidates.sort(key=lambda x: (-x[0], len(x[6])))
+        cur_score = 2 ** 31 - 1
+        for candidate in candidates:
+            score, trace_M, trace_I, trace_D, end_i, end_j, encoded_motif = candidate
+            if score == cur_score:
+                continue
+            cur_score = score
+            # get alignment operations and starting positions
+            # The alignment may not start from the beginning of the motif or sequence
+            # start_i: starting position in seq (1-based DP index, 0 means start from beginning)
+            # start_j: starting position in motif (0-based index, 0 means start from beginning)
+            ops: List[str]
+            start_i: int
+            start_j: int
+            ops, start_i, start_j = traceback_banded_roll_motif(
+                trace_M = trace_M,
+                trace_I = trace_I,
+                trace_D = trace_D,
+                best_i = end_i,
+                best_j = end_j,
+                m = len(encoded_motif),
+                seq = encoded_seq,
+                motif = encoded_motif,
+            )
+        
+            # Adjust motif based on starting position
+            if start_j > 0:
+                # Rotate motif so that alignment starts from the beginning
+                adjusted_motif = np.concatenate((encoded_motif[start_j:], encoded_motif[:start_j]))
+            else:
+                adjusted_motif = encoded_motif
+
+            # refine motif
+            ### consensus = xxxxxxx()
+        
+            rgn_dict["motif"] = decode_array_to_seq(adjusted_motif)
+            rgn_dict["period"] = len(adjusted_motif) # TODO
+            rgn_dict["consensusSize"] = len(adjusted_motif)
+            rgn_dict["score"] = score
+
+            cigar: str = ops_to_cigar(ops, len(adjusted_motif))
+            rgn_dict["cigar"] = cigar if not SKIP_CIGAR else "."
+            rgn_dict["copyNumber"] = get_copy_number(cigar, rgn_dict["period"])
+
+            if rgn_dict["copyNumber"] < min_copy:
+                continue
+
+            # calculate nucleotide composition and entropy
+            if format in ["trf", "bed"]:
+                rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops, len(rgn_dict["sequence"]))
+                nt_comp, entropy = calculate_nucleotide_composition(rgn_dict["sequence"])
+                rgn_dict["A"], rgn_dict["C"], rgn_dict["G"], rgn_dict["T"] = nt_comp["A"], nt_comp["C"], nt_comp["G"], nt_comp["T"]
+                rgn_dict["entropy"] = entropy
+        
+            # add output row
+            output_rows.append([rgn_dict[k] for k in HEADER])
+
+    # wrtie resutls
     with open(output_filepath, 'w', newline='', encoding='utf-8') as fo:
-        # write header
         writer = csv.writer(fo, delimiter='\t', lineterminator='\n')
         writer.writerow(HEADER)
-
-        with open(polished_rgn_path, 'r', newline='', encoding='utf-8') as fi:
-            reader = csv.reader(fi, delimiter='\t')
-
-            # start alignment for each region
-            for row in reader:
-                logger.debug(f"-------- annotating region {row[1]}:{row[2]}-{row[3]} --------")
-                rgn_dict = {
-                    "win_id": row[0],
-                    "chrom": row[1],
-                    "start": int(row[2]),
-                    "end": int(row[3]),
-                    "ksizes": row[4].translate(str.maketrans("", "", "[] ")),
-                    "smoothness": row[5],
-                    "periods": ast.literal_eval(row[6]),
-                    "sequence": row[7],
-                    "motifs": ast.literal_eval(row[8])
-                }
-                if format == "bed":
-                    rgn_dict.update({
-                        "pseudoScore": 1000,
-                        "strand": ".",
-                        "start": int(row[2]) - 1,
-                        "thickStart": int(row[2]) - 1,
-                        "thickEnd": int(row[3]),
-                        "itemRgb": ".",
-                        "blockCount": 1,
-                        "blockSizes": int(row[3]) - int(row[2]),
-                        "blockStarts": 0
-                    })
-                max_score: int = 0
-                candidates: List[Tuple[int, np.ndarray, np.ndarray, np.ndarray, int, int, str]] = [] # score, trace_M, trace_I, trace_D, end_i, end_j, motif
-                encoded_seq = encode_seq_to_array(rgn_dict["sequence"])
-                seq_len = len(encoded_seq)
-                MAX_DP_LENGTH: int = 10 ** 6
-
-                subregion: List[Tuple[int, int]] = []
-                MAX_MOTIF_LEN: int = max(len(motif) for motif in rgn_dict["motifs"])
-
-                for i in range(0, seq_len, MAX_DP_LENGTH - MAX_MOTIF_LEN):
-                    subregion.append((i, i + MAX_DP_LENGTH))
-
-                for motif in rgn_dict["motifs"]:
-                    logger.debug(f"refining motif {motif} for region {rgn_dict['chrom']}:{rgn_dict['start']}-{rgn_dict['end']}")
-                    subregion_pre: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-                    motif_len = len(motif)
-                    encoded_motif = encode_seq_to_array(motif)
-                    #####
-                    ###print(f"start refine motif")
-                    ###print(f"encoded_motif: {decode_array_to_seq(encoded_motif)}")
-                    profile = np.zeros((len(encoded_motif), 5), dtype=np.int32)
-                    for i in range(0, seq_len, MAX_DP_LENGTH):
-                        profile += _banded_refine_motif(encoded_seq[i: i + MAX_DP_LENGTH], encoded_motif, MAX_PERIOD)
-                    ###print(f"profile: {profile}")
-                    ###print(f"encoded_refined_motif: {decode_array_to_seq(encoded_refined_motif)}")
-                    ###print(f"encoded_motif: {decode_array_to_seq(encoded_motif)}")
-                    #####
-
-                    encoded_refined_motif = profile.argmax(axis=1)
-                    encoded_refined_motif = encoded_refined_motif[encoded_refined_motif != 4]
-
-                    # check the periodicity of the refined motif
-                    is_periodic, period = is_periodic_seq(encoded_refined_motif)
-                    if is_periodic:
-                        encoded_refined_motif = encoded_refined_motif[:period] # get the minimal period
-                    # empty refined motif
-                    if len(encoded_refined_motif) == 0:
-                        continue
-
-                    pre_M = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    pre_I = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    pre_D = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    for s, e in subregion:
-                        logger.debug(f"!!!! subregion {s}")
-                        subregion_pre.append((pre_M[-MAX_MOTIF_LEN:, :], 
-                                              pre_I[-MAX_MOTIF_LEN:, :], 
-                                              pre_D[-MAX_MOTIF_LEN:, :]
-                                            ))
-                        pre_M, pre_I, pre_D = banded_dp_align_forward(
-                            seq = encoded_seq[s: e],
-                            motif = encoded_refined_motif,
-                            band_width = MAX_PERIOD,
-                            overlap_length = MAX_MOTIF_LEN,
-                            pre_M = pre_M,
-                            pre_I = pre_I,
-                            pre_D = pre_D,
-                            is_start = (s == 0),
-                        )
-
-                    score = pre_M[-1, :].max()
-
-                    if score >= max_score * SECONDARY_SCORE_RATIO:
-                        if score > max_score: # filter out secondary candidates with lower score
-                            candidates = [candidate for candidate in candidates if candidate[0] >= score * SECONDARY_SCORE_RATIO]
-                        ###print(f"score: {score}, motif: {decode_array_to_seq(encoded_refined_motif)}, end_i: {end_i}, end_j: {end_j}")
-                        candidates.append((score, encoded_refined_motif))
-                        max_score = max(max_score, score)
-
-                if len(candidates) == 0:
-                    continue
-
-                # skip the region if the score is too low
-                if max_score < min_score:
-                    continue
-
-                # filter and sort candidates by score
-                candidates = [candidate for candidate in candidates if candidate[0] >= max_score * SECONDARY_SCORE_RATIO]
-                candidates.sort(key=lambda x: (-x[0], len(x[1])))
-                cur_score = 2 ** 31 - 1
-                for candidate in candidates:
-                    score, encoded_motif = candidate
-                    if score == cur_score:
-                        continue
-                    cur_score = score
-                    # get alignment operations and starting positions
-                    # The alignment may not start from the beginning of the motif or sequence
-                    # start_i: starting position in seq (1-based DP index, 0 means start from beginning)
-                    # start_j: starting position in motif (0-based index, 0 means start from beginning)
-                    ops_list: List[List[str]] = []
-                    start_i_list: List[int] = []
-                    start_j_list: List[int] = []
-
-                    n_sub = len(subregion)
-                    for idx in range(n_sub - 1, -1, -1):
-                        s, e = subregion[idx]
-                        pre_M, pre_I, pre_D = subregion_pre[idx]
-                        seg = encoded_seq[s:e]
-
-                        score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align_backward(
-                            seq = seg,
-                            motif = encoded_motif,
-                            band_width = MAX_PERIOD,
-                            overlap_length = MAX_MOTIF_LEN,
-                            pre_M = pre_M,
-                            pre_I = pre_I,
-                            pre_D = pre_D,
-                            is_start = (s == 0),
-                        )
-
-                        seg_n = seg.shape[0]
-                        # Local row where backward walk starts (right end of path in this segment):
-                        # align overlap boundary with next window: g_join = subregion[idx+1][0] -> row s_next - s.
-                        if idx + 1 < n_sub:
-                            s_next = subregion[idx + 1][0]
-                            best_i_trace = min(seg_n, s_next - s)
-                        else:
-                            best_i_trace = seg_n
-                        if best_i_trace < 1:
-                            best_i_trace = 1
-                        # Overlap is assigned to the right-hand window only: left chunk ends at row
-                        # (s_next - s), right chunk traces full seg_n -> 0. No second cut (i_floor).
-
-                        best_state = int(score_array[best_i_trace - 1, :].argmax())
-                        end_j = int(band_argmax_j[best_i_trace - 1, best_state])
-
-                        ops, tb_start_i, tb_start_j = traceback_banded_roll_motif(
-                            trace_M = trace_M,
-                            trace_I = trace_I,
-                            trace_D = trace_D,
-                            best_i = best_i_trace,
-                            best_j = end_j,
-                            m = len(encoded_motif),
-                            seq = seg,
-                            motif = encoded_motif,
-                        )
-
-                        ops_list.append(ops)
-                        start_i_list.append(tb_start_i)
-                        start_j_list.append(tb_start_j)
-
-                    # Loop order was last subregion -> first; restore 5'->3' order for ops
-                    ops_merged: List[str] = []
-                    for subops in reversed(ops_list):
-                        ops_merged.extend(subops)
-
-                    # Adjust motif based on starting position
-                    start_j = start_j_list[-1]
-                    if start_j > 0:
-                        # Rotate motif so that alignment starts from the beginning
-                        adjusted_motif = np.concatenate((encoded_motif[start_j:], encoded_motif[:start_j]))
-                    else:
-                        adjusted_motif = encoded_motif
-                
-                    rgn_dict["motif"] = decode_array_to_seq(adjusted_motif)
-                    rgn_dict["period"] = len(adjusted_motif) # TODO
-                    rgn_dict["consensusSize"] = len(adjusted_motif)
-                    rgn_dict["score"] = score
-
-                    cigar: str = ops_to_cigar(ops_merged, len(adjusted_motif))
-                    rgn_dict["cigar"] = cigar if not SKIP_CIGAR else "."
-                    rgn_dict["copyNumber"] = get_copy_number(cigar, rgn_dict["period"])
-
-                    if rgn_dict["copyNumber"] < min_copy:
-                        continue
-
-                    # calculate nucleotide composition and entropy
-                    if format in ["trf", "bed"]:
-                        rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops_merged, len(rgn_dict["sequence"]))
-                        nt_comp, entropy = calculate_nucleotide_composition(rgn_dict["sequence"])
-                        rgn_dict["A"], rgn_dict["C"], rgn_dict["G"], rgn_dict["T"] = nt_comp["A"], nt_comp["C"], nt_comp["G"], nt_comp["T"]
-                        rgn_dict["entropy"] = entropy
-                
-                    # add output row
-                    writer.writerow([rgn_dict[k] for k in HEADER])
+        writer.writerows(output_rows)
     
     return output_filepath
 
@@ -1977,7 +2116,7 @@ def banded_dp_align(
     have_downstream = compare_row >= 0
 
     score_array = np.full((n, 3), NEG_INF, np.int32)
-    band_argmax_j = np.full((n, 3), -1, np.int16)
+    band_argmax_j = np.full((n, 3), -1, np.int32)
 
     # ---- DP matrices ----
     M = np.full((n + 1, m), NEG_INF, np.int32)
@@ -2106,435 +2245,15 @@ def banded_dp_align(
             # if already compute the compare row, and no likelihood to exceed the best score, break
             if (n - i) * MATCH_SCORE + max(cur_score_m, cur_score_i, cur_score_d) <= best_score:
                 break
+            """# if already compute the anchor row, and no likelihood to exceed the anchor row score, break
+            if anchor_row is not None and i + 1 >= anchor_row and (n - i) * MATCH_SCORE + max(cur_score_m, cur_score_i, cur_score_d) <= score_array[anchor_row, :].max():
+                break"""
     
     return (
         score_array,
         band_argmax_j,
         trace_M, trace_I, trace_D,
     )
-
-@numba.njit(cache=True)
-def _banded_refine_motif(seq: np.ndarray, motif: np.ndarray, band_width: int):
-    """
-    Refine the motif using banded dynamic programming
-    Inputs:
-        seq: np.ndarray, sequence
-        motif: np.ndarray, motif
-        band_width: int, band width
-    Outputs:
-        profile: np.ndarray, motif profile
-    Notes:
-        The profile is a 2D array of shape (m, 5), where m is the length of the motif.
-        The first 4 columns are the counts of A/C/G/T in the motif, and the last column is the count of gaps.
-        The profile is used to refine the motif by removing gaps.
-    """
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10**9
-
-    # DP matrices
-    M = np.full((n, m), NEG_INF, np.int32)
-    I = np.full((n, m), NEG_INF, np.int32)
-    D = np.full((n, m), NEG_INF, np.int32)
-
-    # Traceback matrices
-    trace_state = np.zeros((n, m), np.int8)   # 0=M,1=I,2=D
-    trace_prev_j = np.zeros((n, m), np.int32) # previous j in band
-
-    # ---- initialize ----
-    for j in range(m):
-        M[0, j] = 0
-
-    # ---- run-length scaling (optional) ----
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i-1]:
-            run_len[i] = run_len[i-1] + 1
-        else:
-            run_len[i] = 1
-
-    alpha = 0.5
-    min_scale = 0.3
-
-    for i in range(1, n):
-        j_center = i % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-
-        si = seq[i]
-
-        # scale gap penalties
-        rl = run_len[i]
-        scale = 1.0 / (1.0 + alpha*(rl-1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-            prev_j = m - 1 if j == 0 else j - 1
-
-            # match/mismatch score
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            # ---- M state ----
-            best_prev = M[i-1, prev_j]
-            state = 0
-
-            if I[i-1, prev_j] > best_prev:
-                best_prev = I[i-1, prev_j]
-                state = 1
-            if D[i-1, prev_j] > best_prev:
-                best_prev = D[i-1, prev_j]
-                state = 2
-
-            M[i, j] = best_prev + s
-            trace_state[i, j] = state
-            trace_prev_j[i, j] = prev_j
-
-            # ---- I state ---- (gap in motif)
-            open_i = M[i-1, j] - gap_open_scaled
-            ext_i = I[i-1, j] - gap_extend_scaled
-            if open_i > ext_i:
-                I[i, j] = open_i
-                # prev j stays the same
-            else:
-                I[i, j] = ext_i
-
-            # ---- D state ---- (gap in seq)
-            open_d = M[i, prev_j] - gap_open_scaled
-            ext_d = D[i, prev_j] - gap_extend_scaled
-            if open_d > ext_d:
-                D[i, j] = open_d
-                # prev j stays prev_j
-            else:
-                D[i, j] = ext_d
-
-    # ---- find best score at last row ----
-    last_row = n-1
-    all_scores = np.empty(m*3, dtype=np.int32)
-    for j in range(m):
-        all_scores[j*3+0] = M[last_row, j]
-        all_scores[j*3+1] = I[last_row, j]
-        all_scores[j*3+2] = D[last_row, j]
-
-    best_idx = np.argmax(all_scores)
-    best_state = best_idx % 3
-    best_j = best_idx // 3
-
-    # ---- traceback to reconstruct motif profile ----
-    profile = np.zeros((m, 5), dtype=np.int32)
-    i = last_row
-    j = best_j
-    state = best_state
-
-    while i >= 0 and j >= 0:
-        if state == 0:
-            profile[j, seq[i]] += 1
-            prev_j = trace_prev_j[i, j]
-            state = trace_state[i, j]
-            i -= 1
-            j = prev_j
-        elif state == 1:
-            i -= 1
-            # stay same j, state change
-            state = 0  # or trace_state[i, j] if you want more precise
-        else: # D_STATE
-            profile[j, 4] += 1
-            prev_j = trace_prev_j[i, j]
-            state = 0  # or trace_state[i, j]
-            j = prev_j
-
-    return profile
-
-def banded_dp_align_forward(
-    seq: np.ndarray,
-    motif: np.ndarray,
-    band_width: int,
-    overlap_length: int,
-    pre_M: np.ndarray,
-    pre_I: np.ndarray,
-    pre_D: np.ndarray,
-    is_start: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Forward banded dynamic programming alignment
-    Inputs:
-        seq: np.ndarray, sequence
-        motif: np.ndarray, motif
-        band_width: int, band width
-        pre_score_array: np.ndarray, previous score array
-        pre_band_argmax_j: np.ndarray, previous band argmax j
-    Outputs:
-        score_array: np.ndarray, score array
-        band_argmax_j: np.ndarray, band argmax j
-    """
-        # score_array[i, s] = max M/I/D in band at DP row i+1; s in {0,1,2} -> M,I,D.
-    # band_argmax_j[i, s] = motif column j (0-based) where that row-state max is attained
-    # (first j in band scan order on ties, same as strict > updates).
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10 ** 9
-
-    # ---- DP matrices ----
-    M = np.full((n + 1, m), NEG_INF, np.int32)
-    I = np.full((n + 1, m), NEG_INF, np.int32)
-    D = np.full((n + 1, m), NEG_INF, np.int32)
-
-    if not is_start:
-        M[:overlap_length, :] = pre_M
-        I[:overlap_length, :] = pre_I
-        D[:overlap_length, :] = pre_D
-
-    # ---- init ----
-    for j in range(m):
-        M[0, j] = 0
-
-    # ---- precompute run-length of seq ----
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i - 1]:
-            run_len[i] = run_len[i - 1] + 1
-        else:
-            run_len[i] = 1
-
-    # ---- parameters for scaling ----
-    alpha = 0.5   # control the decay strength (can be adjusted)
-    min_scale = 0.3  # lower bound, prevent gap too cheap
-
-    if is_start:
-        start = 1
-    else:
-        start = overlap_length
-    
-    for i in range(start, n + 1):
-
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end   = min(m, j_center + band_width + 1)
-
-        si = seq[i - 1]
-
-        # ---- current run-length ----
-        rl = run_len[i - 1]
-
-        # scale: 1 / (1 + alpha*(rl-1))
-        scale = 1.0 / (1.0 + alpha * (rl - 1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled   = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-
-            prev_j = m - 1 if j == 0 else j - 1
-
-            # ---- match/mismatch ----
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            # ---- M ----
-            best_prev = M[i - 1, prev_j]
-
-            v = I[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-
-            v = D[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-
-            M[i, j] = best_prev + s
-
-            # ---- I (gap in motif) ----
-            open_i = M[i - 1, j] - gap_open_scaled
-            ext_i  = I[i - 1, j] - gap_extend_scaled
-
-            if open_i > ext_i:
-                I[i, j] = open_i
-            else:
-                I[i, j] = ext_i
-
-            # ---- D (gap in seq) ----
-            open_d = M[i, prev_j] - gap_open_scaled
-            ext_d  = D[i, prev_j] - gap_extend_scaled
-
-            if open_d > ext_d:
-                D[i, j] = open_d
-            else:
-                D[i, j] = ext_d
-    
-    new_overlap_M = M[n + 1 - overlap_length : n + 1, :]
-    new_overlap_I = I[n + 1 - overlap_length : n + 1, :]
-    new_overlap_D = D[n + 1 - overlap_length : n + 1, :]
-
-    return (
-        new_overlap_M,
-        new_overlap_I,
-        new_overlap_D
-    )
-
-@numba.njit(cache=True)
-def banded_dp_align_backward(
-    seq: np.ndarray,
-    motif: np.ndarray,
-    band_width: int,
-    overlap_length: int,
-    pre_M: np.ndarray,
-    pre_I: np.ndarray,
-    pre_D: np.ndarray,
-    is_start: bool,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Banded DP on a segment; same transitions and outputs as banded_dp_align.
-    Optionally seeds the first overlap_length rows from forward pass (pre_*).
-    """
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10 ** 9
-
-    score_array = np.full((n, 3), NEG_INF, np.int32)
-    band_argmax_j = np.full((n, 3), -1, np.int16)
-
-    M = np.full((n + 1, m), NEG_INF, np.int32)
-    I = np.full((n + 1, m), NEG_INF, np.int32)
-    D = np.full((n + 1, m), NEG_INF, np.int32)
-
-    trace_M = np.full((n + 1, m), -1, np.int8)
-    trace_I = np.full((n + 1, m), -1, np.int8)
-    trace_D = np.full((n + 1, m), -1, np.int8)
-
-    if not is_start:
-        for r in range(overlap_length):
-            for c in range(m):
-                M[r, c] = pre_M[r, c]
-                I[r, c] = pre_I[r, c]
-                D[r, c] = pre_D[r, c]
-
-    for j in range(m):
-        M[0, j] = 0
-
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i - 1]:
-            run_len[i] = run_len[i - 1] + 1
-        else:
-            run_len[i] = 1
-
-    alpha = 0.5
-    min_scale = 0.3
-
-    if is_start:
-        start = 1
-    else:
-        start = overlap_length
-    if start < 1:
-        start = 1
-
-    for i in range(start, n + 1):
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-
-        si = seq[i - 1]
-        cur_score_m = NEG_INF
-        cur_score_i = NEG_INF
-        cur_score_d = NEG_INF
-        cur_j_m = -1
-        cur_j_i = -1
-        cur_j_d = -1
-
-        rl = run_len[i - 1]
-        scale = 1.0 / (1.0 + alpha * (rl - 1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-            prev_j = m - 1 if j == 0 else j - 1
-
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            best_prev = M[i - 1, prev_j]
-            state = 0
-            v = I[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-                state = 1
-            v = D[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-                state = 2
-
-            M[i, j] = best_prev + s
-            trace_M[i, j] = state
-
-            open_i = M[i - 1, j] - gap_open_scaled
-            ext_i = I[i - 1, j] - gap_extend_scaled
-            if open_i > ext_i:
-                I[i, j] = open_i
-                trace_I[i, j] = 0
-            else:
-                I[i, j] = ext_i
-                trace_I[i, j] = 1
-
-            open_d = M[i - 1, prev_j] - gap_open_scaled
-            ext_d = D[i - 1, prev_j] - gap_extend_scaled
-            if open_d > ext_d:
-                D[i, j] = open_d
-                trace_D[i, j] = 0
-            else:
-                D[i, j] = ext_d
-                trace_D[i, j] = 2
-
-            if M[i, j] > cur_score_m:
-                cur_score_m = M[i, j]
-                cur_j_m = j
-            if I[i, j] > cur_score_i:
-                cur_score_i = I[i, j]
-                cur_j_i = j
-            if D[i, j] > cur_score_d:
-                cur_score_d = D[i, j]
-                cur_j_d = j
-
-        score_array[i - 1, 0] = cur_score_m
-        band_argmax_j[i - 1, 0] = cur_j_m
-        score_array[i - 1, 1] = cur_score_i
-        band_argmax_j[i - 1, 1] = cur_j_i
-        score_array[i - 1, 2] = cur_score_d
-        band_argmax_j[i - 1, 2] = cur_j_d
-
-    for i in range(1, start):
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-        cur_score_m = NEG_INF
-        cur_score_i = NEG_INF
-        cur_score_d = NEG_INF
-        cur_j_m = -1
-        cur_j_i = -1
-        cur_j_d = -1
-        for j in range(j_start, j_end):
-            if M[i, j] > cur_score_m:
-                cur_score_m = M[i, j]
-                cur_j_m = j
-            if I[i, j] > cur_score_i:
-                cur_score_i = I[i, j]
-                cur_j_i = j
-            if D[i, j] > cur_score_d:
-                cur_score_d = D[i, j]
-                cur_j_d = j
-        score_array[i - 1, 0] = cur_score_m
-        band_argmax_j[i - 1, 0] = cur_j_m
-        score_array[i - 1, 1] = cur_score_i
-        band_argmax_j[i - 1, 1] = cur_j_i
-        score_array[i - 1, 2] = cur_score_d
-        band_argmax_j[i - 1, 2] = cur_j_d
-
-    return score_array, band_argmax_j, trace_M, trace_I, trace_D
 
 def traceback_banded_roll_motif(
     trace_M: np.ndarray, trace_I: np.ndarray, trace_D: np.ndarray,
@@ -2592,6 +2311,8 @@ def traceback_banded_roll_motif(
     start_j = (j + 1) % m if m > 0 else 0
 
     return ops, start_i, start_j
+
+
 
 """
 #
@@ -2709,27 +2430,12 @@ def merge_outputs(job_dir: str, rgn_filepaths: List[str]) -> str:
 """
 def run_scan(cfg: dict[str, Any]) -> None:
     """
-    Run the scan function
-
-    Parameters
-    ----------
+    Run the scan function.
+    Inputs:
         cfg : dict[str, Any], configuration dictionary
-    
-    Returns
-    -------
+    Outputs:
         None
-    
-    Generates the following files:
-        - <prefix>.log # log file
-        - <prefix>.tsv # annotation results
-        - <prefix>.web_summary.html # web summary of annotation
-        - <JOB_DIR>/windows/ # split windows (temp)
-        - <JOB_DIR>/stats/ # smoothness score distribution (temp)
-        - <JOB_DIR>/raw_rgns/ # raw regions (temp)
-        - <JOB_DIR>/polished_rgns/ # polished regions (temp)
-        - <JOB_DIR>/annotated_rgns/ # annotated regions (temp)
-    """    
-    global JOB_DIR
+    """
     JOB_DIR = cfg["job_dir"]
     # Set global variables for alignment functions
     global MATCH_SCORE, MISMATCH_PENALTY, GAP_OPEN_PENALTY, GAP_EXTEND_PENALTY
@@ -2743,6 +2449,12 @@ def run_scan(cfg: dict[str, Any]) -> None:
     SECONDARY_SCORE_RATIO = cfg["secondary"]
     global SKIP_CIGAR
     SKIP_CIGAR = cfg["skip_cigar"]
+    global ENCODE_TABLE
+    ENCODE_TABLE = np.full(256, -1, dtype=np.int8)
+    ENCODE_TABLE[ord('A')] = 0
+    ENCODE_TABLE[ord('C')] = 1
+    ENCODE_TABLE[ord('G')] = 2
+    ENCODE_TABLE[ord('T')] = 3
     global OPS_TABLE
     OPS_TABLE = np.full(256, -1, dtype=np.int8)
     OPS_TABLE[ord("=")] = 0
@@ -2764,7 +2476,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
     logger.info(f"{cfg["threads"]} cores are used")
 
     # read input fasta file
-    fasta: Iterator[SeqRecord] = read_fasta(cfg["input"])
+    fasta: List[SeqRecord] = list(read_fasta(cfg["input"]))
     logger.info(f"Finished reading fasta file: {cfg["input"]}")
 
     # split fasta file into windows
@@ -2776,7 +2488,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
     Path(JOB_DIR + "/stats").mkdir(parents=True, exist_ok=True)
     Path(JOB_DIR + "/raw_rgns").mkdir(parents=True, exist_ok=True)
     Path(JOB_DIR + "/polished_rgns").mkdir(parents=True, exist_ok=True)
-    tasks: List[Tuple[str, List[int], int, int, int]] = [(win_filepath, cfg["ksize"], cfg["max_period"], cfg["rolling_win_size"], cfg["min_smoothness"]) for win_filepath in win_filepaths]
+    tasks: List[Tuple[str, str, List[int], int, int, int]] = [(JOB_DIR, win_filepath, cfg["ksize"], cfg["max_period"], cfg["rolling_win_size"], cfg["min_smoothness"]) for win_filepath in win_filepaths]
     try:
         with Pool(processes = cfg["threads"]) as pool:
             results: List[str] = []

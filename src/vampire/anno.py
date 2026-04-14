@@ -1,967 +1,1571 @@
-import json
-import sys, os
+import sys
 import resource
-import subprocess
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Tuple, TypedDict
 from itertools import compress
 from importlib.resources import files
-from copy import deepcopy
+import networkx as nx
+import numba
 import time
 import sys
+import logging
+from tqdm import tqdm
 
-import pandas as pd
+import os
+os.environ["POLARS_MAX_THREADS"] = "1"
+import polars as pl
 import edlib
 from pybktree import BKTree
 import numpy as np
 import Levenshtein
 from Bio import SeqIO   # I/O processing
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 from multiprocessing import Pool    # multi-thread
-from rich.console import Console
 
 # Self-defined class
-from vampire.decomposeString import Decompose       # Decompose and annotate sequences
 from vampire.estimateParameters import Estimate    # Automatically find proper parameters
 
-def find_N(task):
-    pid, total_task, sequence, args_dict = task
-    N_coordinates = []  # List to store the start and end indices of 'N' regions
-    start = None  # Variable to track the start of an 'N' region
+from vampire._utils import(
+    encode_seq_to_array,
+    decode_array_to_seq,
+    encode_array_to_int,
+    decode_int_to_array,
+)
+from vampire._report_utils import (
+    ops_to_cigar,
+    get_copy_number,
+)
 
-    # Convert the sequence to a numpy array for efficient processing
-    sequence = np.array(list(sequence))
-    n_indices = np.where(sequence == 'N')[0]
-    
-    # If no 'N' characters are found, return an empty DataFrame
-    if len(n_indices) == 0:
-        log_str = f'Process N Complete: {pid}/{total_task}' if not args_dict['Output Options']['quiet'] else None
-        return pd.DataFrame(columns=['start', 'end']), log_str
-    
-    # Iterate through the indices of 'N' characters to find continuous regions
-    for i in range(len(n_indices)):
-        if start is None:
-            start = n_indices[i]  # Mark the start of a new 'N' region
+logger = logging.getLogger(__name__)
+
+class Decompose:
+    def __init__(self, name, sequence, ksize, args_decomp, args_anno):
+        self.name = name
+        self.sequence = sequence
+        self.ksize = ksize
+        self.abud_threshold = args_decomp['abud_threshold']
+        self.abud_min = args_decomp['abud_min']
+        self.min_similarity = args_anno['annotation_min_similarity']
+
+        # results
+        self.kmer: Dict[int, int] = None
+        self.dbg: nx.DiGraph = None
+        self.motif_df: pl.DataFrame = None
+        self.motif_list: List[str] = None
+        self.anno_df: pl.DataFrame = None
+
+    def count_kmers(self: 'Decompose') -> dict[int, int]:
+        """
+        count kmers in the sequence
+        Input:
+            self: Decompose, the Decompose object (use self.sequence, self.ksize)
+        Output:
+            dict[int, int], the dictionary of kmers and their counts
+        """
+        # return if computed before
+        if self.kmer is not None:
+            return self.kmer
         
-        # If the next 'N' is not consecutive or it's the last 'N', mark the end of the region
-        if i == len(n_indices) - 1 or n_indices[i+1] != n_indices[i] + 1:
-            end = n_indices[i] + 1  # End index is exclusive
-            N_coordinates.append((start, end))  # Add the region to the list
-            start = None  # Reset the start for the next region
-    
-    # Convert the list of 'N' regions to a DataFrame
-    N_coordinate_df = pd.DataFrame(N_coordinates, columns=['start', 'end'])
-    
-    # Adjust the coordinates based on the task ID and window size
-    N_coordinate_df[['start', 'end']] += (pid - 1) * args_dict['General Options']['window_length']
-    
-    log_str = f'Process N Complete: {pid}/{total_task}' if not args_dict['Output Options']['quiet'] else None
+        # not compute before
+        k_len: int = self.ksize + 1
+        encoded_seq: np.ndarray = self.sequence
+        encoded_seq_len: int = len(encoded_seq)
+        kmer_count_int: Dict = {}
 
-    return N_coordinate_df, log_str
+        if encoded_seq_len >= k_len:
+            for i in range(encoded_seq_len - k_len + 1):
+                w = encoded_seq[i : i + k_len]
+                key = encode_array_to_int(w)
+                if key is None:
+                    continue
+                kmer_count_int[key] = kmer_count_int.get(key, 0) + 1
+        
+        max_count: int = max(kmer_count_int.values(), default=0)
+        min_count: int = max(self.abud_min, max_count * self.abud_threshold)
+        self.kmer = {
+            k: v
+            for k, v in kmer_count_int.items()
+            if v >= min_count
+        }
+        return self.kmer
 
-def decompose_sequence(task):
-    seq_name, pid, total_task, args_dict, sequence = task
-    seg = Decompose(sequence, args_dict['Decomposition Options']['ksize'], args_dict['Decomposition Options'], args_dict['Annotation Options'])
-    if not args_dict['Decomposition Options']['no_denovo']:
-        seg.count_kmers()
-        seg.build_dbg(args_dict['I/O Options']['prefix'], seq_name, pid)
-        seg.find_motif()
-    log_str = f'Decomposition Complete: {pid}/{total_task}' if not args_dict['Output Options']['quiet'] else None
-    return ( seq_name, pid, total_task, args_dict, seg ), log_str
+    def build_graph(self: 'Decompose') -> nx.DiGraph:
+        """
+        build De Bruijn graph
+        Input:
+            self: Decompose, the Decompose object (use self.sequence, self.ksize)
+            prefix: str, the prefix of the output file
+            seq_name: str, the name of the sequence
+            pid: int, the process id
+        Output:
+            nx.DiGraph, the De Bruijn graph
+        """
+        # return if computed before
+        if self.dbg is not None:
+            return self.dbg
 
-def single_motif_annotation(task):
-    seq_name, pid, total_task, args_dict, seg = task
-    seg.annotate_with_motif()
-    # polish 5' end annotation
-    ###if pid == 1:
-    ###    seg.annotate_polish_head()
-    df = seg.annotation
-    df[['start', 'end']] += (pid - 1) * (args_dict['General Options']['window_length'] - args_dict['General Options']['overlap_length'])
-    df = df.sort_values(by='end').reset_index(drop=True)
-    df.to_csv(f"{args_dict['I/O Options']['prefix']}_temp/{seq_name}_anno_{pid}.csv", index = False)
-    log_str = f'Single Motif Annotation Complete: {pid}/{total_task}' if not args_dict['Output Options']['quiet'] else None
-    return ( seq_name, pid, total_task, args_dict, seg ), log_str
+        # not compute before
+        dbg = nx.DiGraph()
+        mask = (1 << (2 * self.ksize)) - 1
+        for k in self.kmer:
+            prefix = k >> 2
+            suffix = k & mask
+            dbg.add_edge(prefix, suffix, weight = self.kmer[k])
+        
+        """
+        # make compact De Bruijn graph
+        nodes_to_merge = [n for n in dbg.nodes() if dbg.in_degree(n) == 1 and dbg.out_degree(n) == 1] 
 
-def merge_motifs(task):
-    m1, m2, args_dict = task
-    m1 = m1.dropna().reset_index(drop=True)
-    m2 = m2.dropna().reset_index(drop=True)
-    if m1.empty:
-        return m2
-    if m2.empty:
-        return m1
+        cot = 1
+        for node in nodes_to_merge:
+            if node not in dbg.nodes():
+                continue
 
-    m1['canonical'] = m1['motif'].apply(canonical_form)
-    m2['canonical'] = m2['motif'].apply(canonical_form)
+            # find the start
+            added_nodes = [node]
+            pre = list(dbg.predecessors(node))[0]
+            while dbg.in_degree(pre) == 1 and dbg.out_degree(pre) == 1 and not pre in added_nodes:
+                added_nodes.append(pre)
+                pre = list(dbg.predecessors(pre))[0]
+            
+            added_nodes = added_nodes[::-1]
 
-    canonical_to_index = {}
-    for idx, row in m1.iterrows():
-        canonical = row['canonical']
-        canonical_to_index[canonical] = idx
+            # find the end
+            next = list(dbg.successors(node))[0]
+            while dbg.in_degree(next) == 1 and dbg.out_degree(next) == 1 and not next in added_nodes:
+                added_nodes.append(next)
+                next = list(dbg.successors(next))[0]
 
-    new_rows = []
+            if len(added_nodes) == 1:    # Simple loop; no merging
+                continue
+            
+            merged_node: int = (added_nodes[0] << 2) | added_nodes[-1]
+            ### OLD: merged_node = added_nodes[0] + ''.join(node[-1] for node in added_nodes[1:])
+            start: int = added_nodes[0]
+            end: int = added_nodes[-1]
+            predecessors: list[int] = list(dbg.predecessors(start))
+            successors: list[int] = list(dbg.successors(end))
 
-    for idx, row in m2.iterrows():
-        # check if it is duplicated
-        canonical = row['canonical']
-        if canonical in canonical_to_index:
-            same_idx = canonical_to_index[canonical]
-            m1.loc[same_idx, 'value'] += row['value']
+            if dbg.has_edge(end, start): # just a simple loop
+                dbg.add_edge(merged_node, merged_node, weight = dbg[end][start]['weight'])
+            else:
+                for predecessor in predecessors:
+                    dbg.add_edge(predecessor, merged_node, weight = dbg[predecessor][start]['weight'])
+                for successor in successors:
+                    dbg.add_edge(merged_node, successor, weight = dbg[end][successor]['weight'])
+            
+            # delete original node
+            dbg.remove_nodes_from(added_nodes)
+
+            cot += 1
+        """
+
+        self.dbg = dbg
+
+        return self.dbg
+
+    def find_motif(self: 'Decompose') -> pl.DataFrame:
+        """
+        find motifs in the De Bruijn graph
+        Input:
+            self: Decompose, the Decompose object (use self.dbg)
+        Output:
+            pl.DataFrame, the dataframe of motifs
+        """
+        if self.motif_list is not None:
+            return self.motif_list
+
+        # not compute before
+        cycles: Iterator[list[int]] = nx.simple_cycles(self.dbg)
+        motifs: list[list[str]] = []
+        for cycle in cycles:
+            # get motif
+            encoded_node_seq: List[np.ndarray] = []
+            for node in cycle:
+                encoded_node_seq.append(decode_int_to_array(node, self.ksize))
+            encoded_motif: np.ndarray = np.concatenate([seq[(self.ksize - 1):] for seq in encoded_node_seq])
+            motif: str = decode_array_to_seq(encoded_motif)
+            # calculate the min weight of the loop
+            cot = [self.dbg[cycle[i]][cycle[i+1]]['weight'] for i in range(len(cycle) - 1)]
+            cot.append(self.dbg[cycle[-1]][cycle[0]]['weight'])  # add the weight of the last edge
+            # update
+            motifs.append([motif, None, 'UNKNOWN', min(cot), "denovo"])
+
+        motif_df: pl.DataFrame = pl.DataFrame(
+            motifs, 
+            schema=["motif", "ref_seq", "name", "copy_number", "source"],
+            orient="row"
+        )
+        motif_df = motif_df.sort("copy_number", descending=True)
+
+        self.motif_df = motif_df
+        self.motif_list = motif_df['motif'].to_list()
+
+        return self.motif_df
+
+    def annotate_with_motif(self: 'Decompose'):
+        """
+        annotate the sequence with motifs
+        Input:
+            self: Decompose, the Decompose object (use self.sequecne, self.motif_list, self.min_similarity)
+        Output:
+            pl.DataFrame, the dataframe of annotations
+        """
+        if self.anno_df is not None:
+            return self.anno_df
+
+        # get motifs and max distances
+        motifs: List[str] = self.motif_list
+        encoded_motifs: List[np.ndarray] = [encode_seq_to_array(m) for m in motifs]
+        motifs_rc_all: List[str] = [rc(motif) for motif in motifs]
+        motifs_rc: List[str] = []
+        for m_rc in motifs_rc_all:
+            encoded_m_rc: np.ndarray = encode_seq_to_array(m_rc)
+            is_dup: bool = False
+            for encoded_m in encoded_motifs:
+                dist: int = calculate_edit_distance_between_motifs(encoded_m_rc, encoded_m)
+                if dist == 0:
+                    is_dup = True
+            if not is_dup:
+                motifs_rc.append(m_rc)
+
+        # find matches for plus and minor chains
+        seq: str = decode_array_to_seq(self.sequence)
+        max_distances: List[int] = [int(len(motif) * (1 - self.min_similarity)) for motif in motifs]
+        motif_match_df: pl.DataFrame = find_similar_match(seq, motifs, max_distances)
+        motif_match_df = motif_match_df.with_columns(pl.lit("+").alias("orientation"))
+        if len(motifs_rc) > 0:
+            max_distances: List[int] = [int(len(motif) * (1 - self.min_similarity)) for motif in motifs_rc]
+            motif_rc_match_df: pl.DataFrame = find_similar_match(seq, motifs_rc, max_distances)
+            motif_rc_match_df = motif_rc_match_df.with_columns(
+                pl.col("motif").map_elements(lambda x: rc(x)).alias("recovered_motif")
+            ).with_columns(
+                pl.lit("-").alias("orientation"),
+                pl.col("recovered_motif").alias("motif")
+            ).drop("recovered_motif")
         else:
-            new_rows.append(row)
-            canonical_to_index[canonical] = len(m1) + len(new_rows) - 1
+            motif_rc_match_df = pl.DataFrame(schema = ["start", "end", "distance", "score", "cigar", "motif", "orientation"])
+        result = pl.concat([motif_match_df, motif_rc_match_df]) # ['start', 'end', 'distance', 'score', 'cigar', 'motif', 'orientation'], coordinates are 0-based, end is inclusive
 
-    if new_rows:
-        m1 = pd.concat([m1, pd.DataFrame(new_rows)], ignore_index=True)
+        result = result.sort("start")
 
-    m1 = m1.nlargest(args_dict['Decomposition Options']['motifnum'], 'value').reset_index(drop=True)
-    return m1
+        self.anno_df = result
 
-def get_distacne_and_cigar(ref, query):
-    matches = edlib.align(query, ref, mode = "NW", task = "path")
-    return matches['editDistance'], matches['cigar']
+        return self.anno_df
 
-'''def get_distacne_wo_cigar(ref, query):
-    matches = edlib.align(query, ref, mode = "NW", task = "distance")
-    return matches['editDistance'], "NA"'''
+def canonicalize_motif_str(s: str) -> str:
+    """
+    Return the lexicographically smallest cyclic rotation of a string (Booth algorithm).
+    Input:
+        s: str
+    Output:
+        str
+    """
+    n = len(s)
+    if n == 0:
+        return s
+
+    i, j, k = 0, 1, 0
+
+    while i < n and j < n and k < n:
+        a = s[(i + k) % n]
+        b = s[(j + k) % n]
+
+        if a == b:
+            k += 1
+        elif a > b:
+            i = i + k + 1
+            if i <= j:
+                i = j + 1
+            k = 0
+        else:
+            j = j + k + 1
+            if j <= i:
+                j = i + 1
+            k = 0
+
+    start = i if i < j else j
+    return s[start:] + s[:start]
 
 def rc(seq):
     complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N':'N'}
     return ''.join(complement[base] for base in reversed(seq))
 
-def calculate_distance(ref, query_list, motif2id):
-    df_list = []
-    for query in query_list:
-        if len(ref) >= len(query): # keep ref <= query
-            tmp_ref, tmp_query = query, ref
-        else:
-            tmp_ref, tmp_query = ref, query
-        
-        rep = len(tmp_query) // len(tmp_ref)
-        extended_ref = tmp_ref * rep
-        extended_ref_rc = rc(tmp_ref) * rep
+# Step 1: process N and other invalid characters, split into windows
+def preprocess_sequence(
+    record: SeqIO.SeqRecord
+) -> dict[str, Any]:
+    """
+    N-mask handling + sliding-window decomposition; returns data needed for global motif merge and annotation.
+    Input:
+        record: SeqIO.SeqRecord
+    Output:
+        dict[str, Any]
+    """
+    seq_name = record.name
+    logger.debug(f"Preprocessing {seq_name}")
 
-        min_dist1, min_dist2 = len(extended_ref), len(extended_ref_rc)
-        matches_ref = edlib.align(tmp_query, extended_ref, mode="NW", task="distance")
-        min_dist1 = min(min_dist1, matches_ref['editDistance'])
-        matches_ref_rc = edlib.align(tmp_query, extended_ref_rc, mode="NW", task="distance")
-        min_dist2 = min(min_dist2, matches_ref_rc['editDistance'])
+    seq: str = str(record.seq.upper())
+    encoded_seq: np.ndarray = encode_seq_to_array(seq)
+    seq_len_with_N: int = len(seq)
+    SEQ_STEP_SIZE: int = SEQ_WIN_SIZE - SEQ_OVLP_SIZE
 
-        df_list.append([motif2id[ref], motif2id[query], min_dist1, False])
-        df_list.append([motif2id[ref], motif2id[query], min_dist2, True])
-    return df_list
+    invalid_mask: np.ndarray = encoded_seq == -1
+    valid2raw: np.ndarray = np.where(~invalid_mask)[0]
+    raw2valid: np.ndarray = np.full(seq_len_with_N, -1, dtype=np.int32)
+    raw2valid[valid2raw] = np.arange(len(valid2raw))
 
-def canonical_form(motif):
-    """Booth's algorithm to find minimal rotation in O(n) time."""
-    s = motif + motif
-    n = len(s)
-    f = [-1] * n
-    k = 0
-    for j in range(1, n):
-        i = f[j - k - 1]
-        while i != -1 and s[j] != s[k + i + 1]:
-            if s[j] < s[k + i + 1]:
-                k = j - i - 1
-            i = f[i]
-        if s[j] != s[k + i + 1]:
-            if s[j] < s[k]:
-                k = j
-            f[j - k] = -1
-        else:
-            f[j - k] = i + 1
-    return s[k:k + len(motif)]
+    if invalid_mask.any():
+        invalid_pos: List[int] = np.where(invalid_mask)[0].tolist()
+        invalid_char: List[str] = [seq[i] for i in invalid_pos]
+        invalid_char = list(set(invalid_char))
+        logger.warning(f"Invalid characters found in sequence {seq_name}: {invalid_char}")
 
-def rotate_strings(s):
-    n = len(s)
-    return [s[i:] + s[:i] for i in range(n)]
+        # mask invalid char
+        encoded_seq: np.ndarray = encoded_seq[encoded_seq != -1]
+    else:
+        ### empty
+        pass
+    encoded_seq_len: int = len(encoded_seq)
 
-def get_args_json(args_dict):
-    return json.dumps(args_dict, indent=4)
+    idx: int = 0
+    task_num: int = max(1, (encoded_seq_len - SEQ_WIN_SIZE) // SEQ_STEP_SIZE + 1)
+    tasks: List[Tuple[str, int, int, np.ndarray]] = []
+    while True:
+        start: int = idx * SEQ_STEP_SIZE
+        window_seq: np.ndarray = encoded_seq[start : start + SEQ_WIN_SIZE]
+        window_seq_len: int = len(window_seq)
+        tasks.append(
+            (seq_name, idx + 1, task_num, window_seq)
+        )
+        if window_seq_len < SEQ_WIN_SIZE:
+            break
+        idx += 1
 
-def build_args_dict(args):
     return {
-        "I/O Options": {
-            "input": args.input,
-            "prefix": args.prefix
-        },
-        "General Options": {
-            "thread": args.thread,
-            "AUTO": args.AUTO,
-            "debug": args.debug,
-            "window_length": args.window_length,
-            "overlap_length": args.overlap_length,
-            "resource": args.resource
-        },
-        "Decomposition Options": {
-            "ksize": args.ksize,
-            "motif": args.motif,
-            "motifnum": args.motifnum,
-            "abud_threshold": args.abud_threshold,
-            "abud_min": args.abud_min,
-            "plot": args.plot,
-            "no_denovo": args.no_denovo
-        },
-        "Annotation Options": {
-            "force": True if args.no_denovo else args.force,
-            "annotation_dist_ratio": args.annotation_dist_ratio,
-            "finding_dist_ratio": args.finding_dist_ratio,
-            "match_score": args.match_score,
-            "lendif_penalty": args.lendif_penalty,
-            "gap_penalty": args.gap_penalty,
-            "distance_penalty": args.distance_penalty,
-            "perfect_bonus": args.perfect_bonus
-        },
-        "Output Options": {
-            "quiet": args.quiet,
-            "score": args.score
-        }
+        "seq_name": seq_name,
+        "have_invalid": invalid_mask.any(),
+        "coordinates_raw2valid": raw2valid,
+        "coordinates_valid2raw": valid2raw,
+        "tasks": tasks
     }
 
+# Step 2: get all motifs
+def decompose_sequence(
+    task: Tuple[str, int, int, np.ndarray]
+) -> 'Decompose':
+    """
+    Decompose sequence into motifs
+    Input:
+        task: Tuple[str, int, int, np.ndarray]
+    Output:
+        dict[str, Any]
+    """
+    seq_name, pid, total_task, sequence = task
 
-# anno.py
-def run_anno(args, parser):
+    decomp_opts = {
+        "abud_threshold": CFG["abud_threshold"],
+        "abud_min": CFG["abud_min"]
+    }
+    anno_opts = {"annotation_min_similarity": CFG["annotation_min_similarity"]}
+    seg = Decompose(
+        name = f"{seq_name}_{pid}",
+        sequence = sequence, 
+        ksize = CFG["ksize"], 
+        args_decomp = decomp_opts, 
+        args_anno = anno_opts
+    )
+    seg.count_kmers()
+    seg.build_graph()
+    seg.find_motif()
+    logger.debug(f"Finished decomposition {seq_name} {pid}/{total_task}")
 
-    # ------------------------------------------------------------------------
-    # config and acquire parameters
-    # ------------------------------------------------------------------------
-    # load config json file
-    args_dict = build_args_dict(args)
+    return seg
 
+# Step 3: polish motifs by BK-tree search and cancatemer trimming
+def polish_motif(
+    motif_catalog: pl.DataFrame,
+    cfg: dict[str, Any],
+) -> pl.DataFrame:
+    """
+    Polish motifs by BK-tree search and dimer cut; returns polished motif table for one sequence.
+    
+    Optimizations:
+    1. Only search using canonical form (not all rotations) to reduce BK-tree queries
+    2. Cache dimer cut results to avoid redundant computation
+    3. Use polars vectorized operations where possible
+    
+    Input:
+        motif_catalog: pl.DataFrame with columns [motif, ref_seq, name, copy_number, source],
+            motif: the sequence to use in annotation
+            ref_seq: the matched reference sequence from database
+            name: the matched labal/seq name from database
+            copy_number: the estimated copy number from decomposition module
+            source: the source of this motif
+        cfg: configuration dictionary with finding_dist_ratio
+    Output:
+        pl.DataFrame with updated ref_seq and name
+    """
+    # separate database and denovo motifs
+    motif_catalog_database: pl.DataFrame = motif_catalog.filter(pl.col("source") == "database")
+    motif_catalog_denovo: pl.DataFrame = motif_catalog.filter(pl.col("source") == "denovo")
+    
+    if motif_catalog_denovo.is_empty():
+        return motif_catalog
+    
+    # build BK-tree from database motifs (using canonical forms)
+    tree = BKTree(calculate_rotation_invariant_distance)
+    ref_to_idx: Dict[str, int] = {}
+    for idx in range(len(motif_catalog_database)):
+        ref_motif = motif_catalog_database.item(row = idx, column = "motif")
+        tree.add(ref_motif)
+        ref_to_idx[ref_motif] = idx
+    
+    logger.info(f"Initialized BK-tree with {len(motif_catalog_database)} database motifs")
+    
+    # prepare results
+    polished_rows: List[Dict[str, Any]] = []
+    
+    # sort by copy_number (descending) to process high-confidence motifs first
+    motif_catalog_denovo = motif_catalog_denovo.sort("copy_number", descending=True)
+    
+    for idx in range(len(motif_catalog_denovo)):
+        row = motif_catalog_denovo.row(idx, named = True)
+        motif: str = row["motif"]
+        motif_len: int = len(motif)
+        canonical_form: str = row["canonical_motif"]
+        max_distance: int = int(cfg.get("finding_dist_ratio", 0.3) * len(motif))
+        
+        min_distance: int = 1_000_000
+        best_motif: str = canonical_form
+        best_ref: str = canonical_form
+        name: str = "UNKNOWN"
+        is_matched: bool = False
+
+        logger.debug(f"Polishing motif {idx}: {motif}")
+        
+        # search canonical form
+        matches = tree.find(motif, max_distance)
+        logger.debug(f"Trying match canonical form ...")
+        for dist, ref_motif in matches:
+            if dist < min_distance:
+                min_distance = dist
+                ref_row = motif_catalog_database.row(ref_to_idx[ref_motif], named = True)
+                best_ref = ref_motif
+                phase = calculate_phase_difference(best_ref, motif)
+                best_motif = motif[phase:] + motif[: phase]
+                name = ref_row["name"]
+                is_matched = True
+                logger.debug(f"### Succesfully matched!\n")
+        
+        # also check reverse complement canonical form
+        if not is_matched:
+            logger.debug(f"Trying match reverse complementary form ...")
+            motif_rc = rc(motif)
+            matches_rc = tree.find(motif_rc, max_distance)
+            for dist, ref_motif in matches_rc:
+                if dist < min_distance:
+                    min_distance = dist
+                    ref_row = motif_catalog_database.row(ref_to_idx[ref_motif], named = True)
+                    best_ref = ref_motif
+                    phase = calculate_phase_difference(best_ref, motif_rc)
+                    best_motif = motif_rc[phase:] + motif_rc[: phase]
+                    name = ref_row["name"]
+                    is_matched = True
+                    logger.debug(f"### Succesfully matched reverse complementary form!\n")
+        
+        # concatemer processing - only process if not already matched
+        is_cut: bool = False
+        if not is_matched:
+            logger.debug(f"Trying cut concatemer ...")
+            best_motif, is_cut = _try_dimer_cut( # TODO TODO TODO
+                motif = canonical_form, 
+                known_motifs = list(ref_to_idx.keys()), 
+                max_ratio=3.0, 
+                ratio_tolerance=0.2
+            )
+            if is_cut:
+                logger.debug(f"Cut motif {motif} to {best_motif}")
+                best_ref = best_motif
+                # add cut motif to tree for subsequent processing
+                if best_motif not in ref_to_idx:
+                    tree.add(best_motif)
+                    ref_to_idx[best_motif] = len(ref_to_idx)
+                    new_row = {
+                        "motif": best_motif,
+                        "ref_seq": best_ref,
+                        "name": name,
+                        "copy_number": row["copy_number"],
+                        "source": "from-cut",
+                        "canonical_motif": best_motif
+                    }
+                    new_row_df = pl.DataFrame([new_row])
+                    motif_catalog_database = motif_catalog_database.vstack(new_row_df)
+                    logger.debug(f"### Succesfully cut!")
+        
+        # if still no match, use canonical form and add to tree
+        if not is_matched and not is_cut:
+            if motif not in ref_to_idx:
+                canonical_form = canonicalize_motif_str(motif)
+                logger.debug(f"### Motif {idx} is not registered, pushing it into the tree\n")
+                tree.add(motif)
+                ref_to_idx[motif] = len(ref_to_idx)
+                new_row = {
+                    "motif": canonical_form,
+                    "ref_seq": canonical_form,
+                    "name": "UNKNOWN",
+                    "copy_number": row["copy_number"],
+                    "source": "from-denovo",
+                    "canonical_motif": canonical_form
+                }
+                new_row_df = pl.DataFrame([new_row])
+                motif_catalog_database = motif_catalog_database.vstack(new_row_df)
+        else:
+            # update row with polished motif
+            polished_rows.append({
+                "motif": best_motif,       # use polished canonical form
+                "ref_seq": best_ref,       # use matched reference sequence if found, otherwise same as motif
+                "name": name,
+                "copy_number": row["copy_number"],
+                "source": row["source"],
+                "canonical_motif": canonical_form
+            })
+    
+    # Combine database and polished denovo motifs
+    if polished_rows:
+        polished_denovo_df = pl.DataFrame(polished_rows)
+        motif_catalog_database = motif_catalog_database.filter(pl.col("source") == "database")
+        result_catalog = pl.concat([motif_catalog_database, polished_denovo_df])
+    else:
+        result_catalog = motif_catalog_database
+    
+    return result_catalog
+
+def _try_dimer_cut(
+    motif: str,
+    known_motifs: List[str],
+    max_ratio: float = 3.0,
+    ratio_tolerance: float = 0.2
+) -> tuple[str, bool]:
+    """
+    Try to cut a motif into smaller repeating units.
+    
+    Args:
+        motif: The canonical form of the motif to cut
+        known_motifs: List of known motifs
+        max_ratio: Maximum length ratio to consider for cutting
+        ratio_tolerance: Tolerance for ratio being close to integer
+    
+    Returns:
+        tuple of (cut_motif, was_cut)
+    """
+    original_len = len(motif)
+    current_motif = motif
+    
+    # sort by length (ascending) to try shorter motifs first
+    known_motifs.sort(key=len)
+    
+    while True:
+        was_cut_this_round = False
+        
+        for ref_motif in known_motifs:
+            ref_len = len(ref_motif)
+            current_len = len(current_motif)
+            
+            # skip invalid candidates
+            if ref_len == 1 or ref_len >= current_len:
+                continue
+            
+            ratio = current_len / ref_len
+            if ratio > max_ratio:
+                continue
+            
+            # check if ratio is close to an integer
+            nearest_int = round(ratio)
+            min_ratio_diff = min(
+                abs(ratio - nearest_int),
+                abs(ratio - nearest_int - 1)
+            )
+            if min_ratio_diff >= ratio_tolerance:
+                continue
+            
+            # check if motif starts with the reference motif
+            if current_motif.startswith(ref_motif):
+                # use edlib to check if cutting improves the match
+                before = edlib.align(current_motif, ref_motif, mode="NW")["editDistance"]
+                after = edlib.align(current_motif[ref_len:], ref_motif, mode="NW")["editDistance"]
+                
+                if after < before:
+                    logger.debug(
+                        f"Dimer cut: {current_motif} -> {current_motif[ref_len:]} | distance: {before} -> {after}"
+                    )
+                    current_motif = current_motif[ref_len:]
+                    current_motif = canonicalize_motif_str(current_motif)
+                    was_cut_this_round = True
+                    break
+        
+        if not was_cut_this_round:
+            break
+    
+    was_cut = len(current_motif) < original_len
+    return current_motif, was_cut
+
+def annotate_sequence(
+    seg: Decompose,
+) -> Decompose:
+    """
+    Annotate sequence with motifs
+    Input:
+        seg: Decompose
+    Output:
+        seg: Decompose
+    """
+    seg.annotate_with_motif()
+
+    anno_df: pl.DataFrame = seg.anno_df
+    pid: int = int(seg.name.split("_")[-1])
+    anno_df = anno_df.with_columns(
+        (pl.col("start") + (pid - 1) * (SEQ_WIN_SIZE - SEQ_OVLP_SIZE)).alias("start"),
+        (pl.col("end") + (pid - 1) * (SEQ_WIN_SIZE - SEQ_OVLP_SIZE)).alias("end")
+    )
+    anno_df = anno_df.sort("end")
+    logger.debug(f"Finished annotation: {seg.name}")
+    return seg
+
+@numba.njit(cache=True)
+def banded_dp_align(
+    seq: np.ndarray,
+    motif: np.ndarray,
+    band_width: int,
+    align_to_end: bool = False,
+    anchor_row: int = -1,
+    compare_row: int = -1,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+        Inputs:
+            seq: np.ndarray, sequence
+            motif: np.ndarray, motif
+            band_width: int, band width
+            align_to_end: bool, whether to align to end
+            anchor_row: int, 0-based anchor row; -1 if unused
+            compare_row: int, 0-based compare row; -1 means no downstream / skip compare logic
+        Outputs:
+            score_array: np.ndarray, score array
+            band_argmax_j: np.ndarray, band argmax j
+            trace_M: np.ndarray, traceback matrix for match / mismatch
+            trace_I: np.ndarray, traceback matrix for insertion
+            trace_D: np.ndarray, traceback matrix for deletion
+    """
+    # score_array[i, s] = max M/I/D in band at DP row i+1; s in {0,1,2} -> M,I,D.
+    # band_argmax_j[i, s] = motif column j (0-based) where that row-state max is attained
+    # (first j in band scan order on ties, same as strict > updates).
+    n = seq.shape[0]
+    m = motif.shape[0]
+    NEG_INF = -10 ** 9
+    # Numba nopython cannot type i <= compare_row when compare_row may be None; use -1 sentinel.
+    have_downstream = compare_row >= 0
+
+    score_array = np.full((n, 3), NEG_INF, np.int32)
+    band_argmax_j = np.full((n, 3), -1, np.int16)
+
+    # ---- DP matrices ----
+    M = np.full((n + 1, m), NEG_INF, np.int32)
+    I = np.full((n + 1, m), NEG_INF, np.int32)
+    D = np.full((n + 1, m), NEG_INF, np.int32)
+
+    trace_M = np.full((n + 1, m), -1, np.int8)
+    trace_I = np.full((n + 1, m), -1, np.int8)
+    trace_D = np.full((n + 1, m), -1, np.int8)
+
+    # ---- init ----
+    for j in range(m):
+        M[0, j] = 0
+
+    # ---- precompute run-length of seq ----
+    run_len = np.ones(n, dtype=np.int32)
+    for i in range(1, n):
+        if seq[i] == seq[i - 1]:
+            run_len[i] = run_len[i - 1] + 1
+        else:
+            run_len[i] = 1
+
+    # ---- parameters for scaling ----
+    alpha = 0.5   # control the decay strength (can be adjusted)
+    min_scale = 0.3  # lower bound, prevent gap too cheap
+
+    best_score = NEG_INF
+
+    for i in range(1, n + 1):
+
+        j_center = (i - 1) % m
+        j_start = max(0, j_center - band_width)
+        j_end   = min(m, j_center + band_width + 1)
+
+        si = seq[i - 1]
+        cur_score_m = NEG_INF
+        cur_score_i = NEG_INF
+        cur_score_d = NEG_INF
+        cur_j_m = -1
+        cur_j_i = -1
+        cur_j_d = -1
+
+        # ---- current run-length ----
+        rl = run_len[i - 1]
+
+        # scale: 1 / (1 + alpha*(rl-1))
+        scale = 1.0 / (1.0 + alpha * (rl - 1))
+        if scale < min_scale:
+            scale = min_scale
+
+        gap_open_scaled   = int(GAP_OPEN_PENALTY * scale)
+        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
+
+        for j in range(j_start, j_end):
+
+            prev_j = m - 1 if j == 0 else j - 1
+
+            # ---- match/mismatch ----
+            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
+
+            # ---- M ----
+            best_prev = M[i - 1, prev_j]
+            state = 0
+
+            v = I[i - 1, prev_j]
+            if v > best_prev:
+                best_prev = v
+                state = 1
+
+            v = D[i - 1, prev_j]
+            if v > best_prev:
+                best_prev = v
+                state = 2
+
+            M[i, j] = best_prev + s
+            trace_M[i, j] = state
+
+            # ---- I (gap in motif) ----
+            open_i = M[i - 1, j] - gap_open_scaled
+            ext_i  = I[i - 1, j] - gap_extend_scaled
+
+            if open_i > ext_i:
+                I[i, j] = open_i
+                trace_I[i, j] = 0
+            else:
+                I[i, j] = ext_i
+                trace_I[i, j] = 1
+
+            # ---- D (gap in seq) ----
+            open_d = M[i, prev_j] - gap_open_scaled
+            ext_d  = D[i, prev_j] - gap_extend_scaled
+
+            if open_d > ext_d:
+                D[i, j] = open_d
+                trace_D[i, j] = 0
+            else:
+                D[i, j] = ext_d
+                trace_D[i, j] = 2
+
+            # ---- record ----
+            if M[i, j] > cur_score_m:
+                cur_score_m = M[i, j]
+                cur_j_m = j
+            if I[i, j] > cur_score_i:
+                cur_score_i = I[i, j]
+                cur_j_i = j
+            if D[i, j] > cur_score_d:
+                cur_score_d = D[i, j]
+                cur_j_d = j
+
+        score_array[i - 1, 0] = cur_score_m
+        band_argmax_j[i - 1, 0] = cur_j_m
+        score_array[i - 1, 1] = cur_score_i
+        band_argmax_j[i - 1, 1] = cur_j_i
+        score_array[i - 1, 2] = cur_score_d
+        band_argmax_j[i - 1, 2] = cur_j_d
+        best_score = max(best_score, cur_score_m, cur_score_i, cur_score_d)
+
+        # ---- early exit ----
+        if not align_to_end:
+            if have_downstream and i <= compare_row:
+                continue
+            # if have downstream, and the score of the compare row is higher than the score of the anchor row, break
+            if have_downstream and score_array[anchor_row, :].max() <= score_array[compare_row, :].max():
+                break
+            # if already compute the compare row, and no likelihood to exceed the best score, break
+            if (n - i) * MATCH_SCORE + max(cur_score_m, cur_score_i, cur_score_d) <= best_score:
+                break
+    
+    return (
+        score_array,
+        band_argmax_j,
+        trace_M, trace_I, trace_D,
+    )
+
+def traceback_banded_roll_motif(
+    trace_M: np.ndarray, trace_I: np.ndarray, trace_D: np.ndarray,
+    best_i: int, best_j: int,
+    m: int,
+    seq: np.ndarray,
+    motif: np.ndarray,
+) -> Tuple[List[str], int, int]:
+    """
+    Inputs:
+        trace_M: np.ndarray, traceback matrix for match / mismatch
+        trace_I: np.ndarray, traceback matrix for insertion
+        trace_D: np.ndarray, traceback matrix for deletion
+        best_i: int, best index in seq
+        best_j: int, best index in motif
+        m: int, length of motif
+        seq: np.ndarray, target sequence
+        motif: np.ndarray, query motif
+    Outputs:
+        ops: List[str], atomic operations: '=', 'X', 'I', 'D', '/'
+        start_i: int, starting position in seq (1-based DP index; 0 means start from beginning)
+        start_j: int, starting position in motif (0-based index)
+    Notes:
+        state: 0=M (diagonal), 1=I (gap in motif), 2=D (gap in seq)
+    """
+    i, j = best_i, best_j
+    state = 0
+
+    ops: List[str] = []
+
+    while i > 0: # index of seq, 1-based
+        if state == 0:  # M
+            prev_state = trace_M[i, j]
+            ops.append("=" if seq[i - 1] == motif[j] else "X")
+            i -= 1
+            j = j - 1 if j > 0 else m - 1
+            state = prev_state
+
+        elif state == 1:  # I
+            prev_state = trace_I[i, j]
+            i -= 1
+            state = prev_state
+            ops.append("I")
+
+        elif state == 2:  # D
+            prev_state = trace_D[i, j]
+            j = j - 1 if j > 0 else m - 1
+            state = prev_state
+            ops.append("D")
+
+    ops.reverse()
+
+    # i, 1-based DP index into seq; j, 0-based motif index before the first aligned motif base.
+    start_i = i
+    start_j = (j + 1) % m if m > 0 else 0
+
+    return ops, start_i, start_j
+
+def find_similar_match(seq: np.ndarray, motifs: list[str], max_distances: list[int]) -> pl.DataFrame:
+    """
+    Find similar matches of motifs in the sequence.
+    Input:
+        seq: str, the input sequence
+        motifs: list[str], the list of motifs to match
+        max_distances: list, the list of maximum edit distances for each motif
+    Output:
+        motif_match_df: pl.DataFrame, columns ['start', 'end', 'distance', ''score', 'cigar', 'motif'], coordinates are 0-based, end is inclusive
+    """
+    motif_pos_rows: List[Dict] = []
+    seq_len: int = len(seq)
+
+    for motif_id, motif in enumerate(motifs):
+        encoded_motif: np.ndarray = encode_seq_to_array(motif)
+        motif_len: int = len(motif)
+        max_distance = max_distances[motif_id]
+        score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+            seq = encode_seq_to_array(seq),
+            motif = encoded_motif,
+            band_width = motif_len,  # full band
+            align_to_end = True
+        )
+
+        state: int= np.argmax(score_array[seq_len - 1, :]) # 0 -> M, 1 -> I, 2 -> D
+        best_j: int = band_argmax_j[seq_len - 1, state]
+
+        # calculate edit distance from traceback
+        ops, _, _ = traceback_banded_roll_motif(
+            trace_M = trace_M,
+            trace_I = trace_I,
+            trace_D = trace_D,
+            best_i = seq_len,
+            best_j = best_j,
+            m = motif_len,
+            seq = seq,
+            motif = motif
+        )
+        rows: List[Tuple[int, int, int, int, str]] = split_ops(ops, len(motif), max_distance)
+        motif_pos: pl.DataFrame = pl.DataFrame(
+            rows,
+            schema=["start", "end", "distance", "score", "cigar"],
+            orient="row"
+        )
+        motif_pos = motif_pos.with_columns(pl.lit(motif).alias("motif"))
+        motif_pos_rows.extend(motif_pos.to_dicts())
+
+    if not motif_pos_rows:
+        return pl.DataFrame(
+            schema=["start", "end", "distance", "score", "cigar", "motif"]
+        )
+
+    # only keep the rows with min distance among rows with the same start and end
+    motif_match_df: pl.DataFrame = pl.DataFrame(motif_pos_rows) 
+
+    min_dist_df = motif_match_df.group_by(["start", "end"]).agg(
+        pl.col("distance").min().alias("min_distance")
+    )
+    motif_match_df = motif_match_df.join(min_dist_df, on=["start", "end"])
+    motif_match_df = motif_match_df.filter(pl.col("distance") == pl.col("min_distance"))
+    motif_match_df = motif_match_df.drop("min_distance").sort("start")
+
+    motif_match_df = (motif_match_df
+        .group_by(["start", "end"], maintain_order=True)
+        .agg([
+            pl.col("distance").min().alias("distance"),
+            pl.col("score").first().alias("score"),
+            pl.col("cigar").first().alias("cigar"),
+            pl.col("motif").first().alias("motif")
+        ])
+        .sort("start")
+    )
+
+    return motif_match_df
+
+def split_ops(
+    ops: List[str], 
+    m: int,
+    max_distance: int
+) -> List[Tuple[int, int, int, str]]:
+    """
+    Split the operations into blocks
+    Inputs:
+        ops : List[str], atomic operations: '=', 'X', 'I', 'D'
+        m : int, length of the motif
+    Outputs:
+        List[Tuple[int, int, int, str]], list of blocks: (start, end, distance, score, cigar), coordinates are 0-based, end is inclusive
+    """
+    cur_phase: int = -1 # current phase in the motif, from 0 to m-1
+    cur_pos: int = -1 # current position on sequence, 0-based
+    cur_score: int = 0
+    start: int = 0
+    ops_start: int = 0
+    distance: int = 0
+    split_results: List[Tuple[int, int, int, str]] = []
+    for i, op in enumerate(ops):
+        match op:
+            case "=":
+                cur_score += MATCH_SCORE
+                cur_pos += 1
+                cur_phase += 1
+            case "X":
+                cur_score -= MISMATCH_PENALTY
+                cur_pos += 1
+                cur_phase += 1
+                distance += 1
+            case "I":
+                cur_score -= GAP_EXTEND_PENALTY
+                cur_pos += 1
+                distance += 1
+            case "D":
+                cur_score -= GAP_EXTEND_PENALTY
+                cur_phase += 1
+                distance += 1
+        
+        if cur_phase == m - 1:
+            if distance <= max_distance:
+                split_results.append((start, cur_pos, distance, cur_score, ops_to_cigar(ops[ops_start: i + 1], m))) # 0-based coordinates; end is inclusive
+            start = cur_pos + 1
+            ops_start = i + 1
+            distance = 0
+            cur_phase = -1
+            cur_score = 0
+    
+    if cur_phase > 0:
+        split_results.append((start, cur_pos, distance, cur_score, ops_to_cigar(ops[ops_start:], m)))
+
+    return split_results
+
+# Step 4: dynamic programming
+def run_dp(
+    task: Tuple[str, str, pl.DataFrame],
+) -> pl.DataFrame:
+    """
+    run dynamic programming to find the best combination of motif matches for one sequence
+    Inputs:
+        task: Tuple[str, str, pl.DataFrame], (seq_name, seq, anno_df)
+    Outputs:
+        pl.DataFrame: the best combination of motif matches
+    """
+    seq_name, seq, anno_df = task
+    seq_len: int = len(seq)
+
+    # dynamic programming to find the best combination of motif matches
+    dp: np.ndarray = np.zeros(seq_len + 1, dtype=np.ndarray) # dp[x] means the best score after annotate the first x bases
+    pre: np.ndarray = np.full(seq_len + 1, -1)
+
+    aln_idx: int = 0
+    for seq_idx in range(1, seq_len + 1): # here is 1-based, need to transform to 0-based when compare with anno_df
+        # --- skip ---
+        if pre[seq_idx - 1] != -1:
+            dp[seq_idx] = dp[seq_idx - 1] - GAP_OPEN_PENALTY
+        else:
+            dp[seq_idx] = dp[seq_idx - 1] - GAP_EXTEND_PENALTY
+        
+        # --- match ---
+        while aln_idx < anno_df.shape[0]:
+            cur_end: int = anno_df.item(row = aln_idx, column = "end")
+            if cur_end > seq_idx - 1:
+                break
+            if cur_end < seq_idx - 1:
+                aln_idx += 1
+                continue
+
+            start: int = anno_df.item(row = aln_idx, column = "start")
+            score: int = anno_df.item(row = aln_idx, column = "score") + dp[start]
+
+            if score > dp[seq_idx]:
+                dp[seq_idx] = score
+                pre[seq_idx] = aln_idx
+            aln_idx += 1
+
+    # retrace the best path
+    rows: List[Dict] = []
+    seq_idx: int = seq_len
+    while seq_idx > 0:
+        aln_idx: int = pre[seq_idx]
+        if aln_idx == -1:
+            seq_idx -= 1
+            continue
+
+        row: Dict = anno_df.row(aln_idx, named = True)
+        row["sequence"] = seq[row["start"]: row["end"] + 1]
+        rows.append(row)
+        seq_idx = row["start"]
+        
+    row_len: int = len(rows) 
+    result_df: pl.DataFrame = pl.DataFrame(rows, schema=["start", "end", "distance", "score", "cigar", "motif", "orientation", "sequence"], orient="row").sort("start")
+
+    # add segments that are not annotated with motifs
+    if result_df.shape[0] == 0:
+        rows.append(
+            {
+                "start": 0,
+                "end": seq_len - 1,
+                "distance": None,
+                "score": GAP_OPEN_PENALTY + (seq_len - 1) * GAP_EXTEND_PENALTY,
+                "cigar": f"{seq_len}N",
+                "motif": None,
+                "orientation": None,
+                "sequence": seq
+            }
+        )
+    else:
+        for idx in range(result_df.shape[0]):
+            start = result_df["end"][idx]
+            if idx == result_df.shape[0] - 1:
+                end = seq_len
+            else:
+                end = result_df["start"][idx + 1] 
+            if start + 1 <= end - 1:
+                rows.append(
+                    {
+                        "start": start + 1,
+                        "end": end - 1,
+                        "distance": None,
+                        "score": GAP_OPEN_PENALTY + (end - start - 2) * GAP_EXTEND_PENALTY,
+                        "cigar": f"{end - start - 1}N",
+                        "motif": None,
+                        "orientation": None,
+                        "sequence": seq[start + 1: end] # here is not end - 1 because the end is the inclusive start of next annotated region
+                    }
+                )
+    if len(rows) > row_len:
+        result_df = pl.DataFrame(rows).sort("start")
+
+    result_df = result_df.with_columns(
+        pl.lit(seq_name).alias("chrom")
+    )
+
+    return result_df
+
+def transform_coords(
+    df: pl.DataFrame,
+    coordinates_valid2raw: Dict[str, np.ndarray]
+) -> pl.DataFrame:
+    """
+    transform the coordinates from valid to raw using the coordinate mapping
+    Inputs:
+        df: pl.DataFrame, the input dataframe with columns ['seqname', 'start', 'end', ...]
+        coordinates_valid2raw: Dict[str, np.ndarray], the mapping from
+    Output:
+        pl.DataFrame, the output dataframe with transformed coordinates
+    """
+    result_start = np.empty(len(df), dtype=np.int32)
+    result_end   = np.empty(len(df), dtype=np.int32)
+
+    seqnames = df["chrom"].to_numpy()
+    starts   = df["start"].to_numpy()
+    ends     = df["end"].to_numpy()
+
+    # group by seqname
+    unique_seqs = np.unique(seqnames)
+
+    for seq in unique_seqs:
+        mask = (seqnames == seq)
+
+        arr = coord_arrays[seq]
+
+        result_start[mask] = arr[starts[mask]]
+        result_end[mask]   = arr[ends[mask]]
+
+    # write back to dataframe
+    df = df.with_columns([
+        pl.Series("start", result_start),
+        pl.Series("end", result_end),
+    ])
+
+    return df
+
+def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> int:
+    """
+    Calculate the edit distance between two motifs
+    Input:
+        motif_i: np.ndarray
+        motif_j: np.ndarray
+    Output:
+        edit_distance: int
+    """
+    # m1 is the longer motif
+    if len(m1) < len(m2):
+        m1, m2 = m2, m1
+
+    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+        seq = m1,
+        motif = m2,
+        band_width = len(m2),
+        align_to_end = True,
+        anchor_row = -1, # no anchor
+        compare_row = -1, # no compare
+    )
+                
+    state: int= np.argmax(score_array[len(m1) - 1, :]) # 0 -> M, 1 -> I, 2 -> D
+    best_j: int = band_argmax_j[len(m1) - 1, state]
+
+    # calculate edit distance from traceback
+    ops, _, _ = traceback_banded_roll_motif(
+        trace_M = trace_M,
+        trace_I = trace_I,
+        trace_D = trace_D,
+        best_i = len(m1),
+        best_j = best_j,
+        m = len(m2),
+        seq = m1,
+        motif = m2
+    )
+    # count edit operations: 'X' (mismatch), 'I' (insertion), 'D' (deletion)
+    edit_distance = sum(1 for op in ops if op in ['X', 'I', 'D'])
+    return edit_distance
+
+def calculate_rotation_invariant_distance(a: str, b: str) -> int:
+    """
+    distance function for BK-tree
+    """
+    encoded_a: np.ndarray = encode_seq_to_array(a)
+    encoded_b: np.ndarray = encode_seq_to_array(b)
+    distance: int = calculate_edit_distance_between_motifs(encoded_a, encoded_b)
+
+    return distance
+
+def calculate_phase_difference(m1: str, m2: str):
+    """
+    calculate phase difference between motif1 and motif2, m1 = m2[phase_diff:] + m2[:phase_diff]
+    Inputs:
+        m1: str
+        m2: str
+    Outputs:
+        phase_diff: int
+    """
+    is_swap: bool = False
+    if len(m1) < len(m2):
+        is_swap = True
+        m1, m2 = m2, m1
+
+    encoded_m1: np.ndarray = encode_seq_to_array(m1)
+    encoded_m2: np.ndarray = encode_seq_to_array(m2)
+
+    score_array, band_argmax_j, _, _, _ = banded_dp_align(
+        seq=encoded_m1,
+        motif=encoded_m2,
+        band_width=len(m2),
+        align_to_end=True,
+        anchor_row=-1,
+        compare_row=-1,
+    )
+
+    state = np.argmax(score_array[len(m1) - 1, :])
+    best_j = band_argmax_j[len(m1) - 1, state]
+    if is_swap:
+        phase_diff = len(m2) - (best_j + 1)
+    else:
+        phase_diff = best_j + 1
+
+    return phase_diff
+
+
+"""
+#
+# main function for annotating single TR locus among samples
+#
+"""
+def run_anno(cfg: dict[str, Any]) -> None:
+    """
+    Run the anno function
+
+    Parameters
+    ----------
+        cfg : dict[str, Any], configuration dictionary
+
+    Returns
+    -------
+        None
+
+    Generates the following files:
+        - <prefix>.log # log file
+        - <prefix>.concise.tsv # concise annotation file
+        - <prefix>.annotation.tsv # detailed annotation file
+        - <prefix>.motif.tsv # motif information file
+        - <prefix>.distance.tsv # motif edit distance information file
+        - <prefix>.web_summary.html # web summary file
+        - <JOB_DIR>/annotation/ # motif annotation records (temp)
+    """
+    # config
+    global JOB_DIR
+    JOB_DIR = cfg["job_dir"]
+    Path(f"{JOB_DIR}/annotation").mkdir(parents=True, exist_ok=True)
+    Path(f"{JOB_DIR}/temp").mkdir(parents=True, exist_ok=True)
+    # Set global variables for alignment functions
+    global MATCH_SCORE, MISMATCH_PENALTY, GAP_OPEN_PENALTY, GAP_EXTEND_PENALTY
+    MATCH_SCORE = cfg["match_score"]
+    MISMATCH_PENALTY = cfg["mismatch_penalty"]
+    GAP_OPEN_PENALTY = cfg["gap_open_penalty"]
+    GAP_EXTEND_PENALTY = cfg["gap_extend_penalty"]
+    global SEQ_WIN_SIZE, SEQ_OVLP_SIZE
+    SEQ_WIN_SIZE = cfg["seq_win_size"]
+    SEQ_OVLP_SIZE = cfg["seq_ovlp_size"]
+    THREADS = cfg["threads"]
+
+    global CFG
+    CFG = cfg
+
+    # set memory limit
+    max_limit: int = min(cfg['resource'] * (1024 ** 3), sys.maxsize)
+    resource.setrlimit(resource.RLIMIT_AS, (max_limit, resource.RLIM_INFINITY))
+
+    START_TIME: float = time.time()
+
+    # test # TODO
+    """
+    m1 = "ATCCGT"
+    m2 = "TCTGTA"
+    pd = calculate_phase_difference(m1, m2)
+    m2_adj = m2[pd:] + m2[:pd]
+    print(m1, m2, pd, m2_adj)
+    """
+
+    """
+    llll
+     estimate parameters
+    """
+    ########################## TODO: fix this
     # estimate parameters if set True
-    if args.AUTO:
-        console.print(f'### Estimate Parameters ###', style="yellow")
+    if cfg.get("auto"):
+        logger.info("Estimating proper k (activated by --auto)")
         sample_rate = 0.01
         sampled_window_length = 5000
         ksize_list = [3, 5, 9, 11, 13, 15, 31, 41, 71]
         min_length, max_length = 10e3, 50e3
 
-        est = Estimate(args_dict['I/O Options']['input'], sample_rate, ksize_list, sampled_window_length)
+        est = Estimate(cfg['input'], sample_rate, ksize_list, sampled_window_length)
         if est.likely_length is None:
             raise ValueError("Cannot detect repeat in the sequence!")
-        args_dict['Decomposition Options']['ksize'] = est.get_k()
+        cfg['ksize'] = est.get_k()
         del est
+    ##########################
 
-    # save parameter settings in JSON format
-    args_json = get_args_json(args_dict)
-    with open(f"{args_dict['I/O Options']['prefix']}.setting.json", 'w') as setting:
-        setting.write(args_json)
-
-    # ------------------------------------------------------------------------
-    # prepare
-    # ------------------------------------------------------------------------
-
-    # Create the output directory
-    os.makedirs(f"{args_dict['I/O Options']['prefix']}_temp", exist_ok=True)
-
-    # Calculate the step size
-    step_length = args_dict['General Options']['window_length'] - args_dict['General Options']['overlap_length']
-
-    # create Console object
-    console = Console()
-
-    # set memory limit
-    max_limit = min(args_dict['General Options']['resource'] * (1024 ** 3), sys.maxsize)
-    resource.setrlimit(resource.RLIMIT_AS, (max_limit, resource.RLIM_INFINITY))
-
-    # ------------------------------------------------------------------------
-    # preprocess: Read data and reference motif set, construct BK tree
-    # ------------------------------------------------------------------------
-
-    if args_dict['General Options']['debug']:
-        start_time = time.time()
-
-    with open(args_dict['I/O Options']['input'], 'r') as handle:
-        seq_records = list(SeqIO.parse(handle, "fasta"))
+    # read data
+    if not Path(cfg['input']).exists():
+        raise FileNotFoundError(cfg['input'])
+    with open(cfg['input'], 'r') as fi:
+        seq_records: List[SeqIO.SeqRecord] = list(SeqIO.parse(fi, "fasta"))
+    logger.info(f"Finished reading fasta file: {cfg['input']}")
     
-    if args_dict['Decomposition Options']['motif'] == 'base':
+    # read reference motif set
+    if cfg['motif'] == 'base':
         db_path = files("vampire.resources").joinpath("refMotif.fa")
     else:
-        db_path = args_dict['Decomposition Options']['motif']
-    with open(db_path, 'r') as handle:
-        motif_records = list(SeqIO.parse(handle, "fasta"))
+        db_path = cfg['motif']
+    with open(db_path, 'r') as fi:
+        motif_records: List[SeqIO.SeqRecord] = list(SeqIO.parse(fi, "fasta"))
 
-    ref_motif2name = dict()
-    tree = BKTree(Levenshtein.distance)  # use Levenshtein distance
+    rows: List[Dict[str, str]] = []
     for record in motif_records:
         motif_name = record.name
         motif = str(record.seq.upper()) # convert to upper case
-        tree.add(motif)
-        ref_motif2name[motif] = motif_name
-        # add inverted motif
-        motif_rc = rc(motif)
-        tree.add(motif_rc)
-        ref_motif2name[motif_rc] = motif_name + '(rc)'
-
-    if args_dict['General Options']['debug']:
-        end_time = time.time()
-        console.print(f'read data and construct BK tree: {round(end_time - start_time, 2)} s', style="green")
-
-    # ------------------------------------------------------------------------
-    # Start processing sequences one by one
-    # ------------------------------------------------------------------------
+        rows.append({
+            "motif": motif,
+            "ref_seq": motif,
+            "name": motif_name,
+            "copy_number": 0,
+            "source": "database"
+        })
+    motif_catalog: pl.DataFrame = pl.DataFrame(rows) # columns: motif, ref_seq, name, source
+    logger.info("Finished loading reference motif set")
+    
     annotation_list = []
     motif2ref_motif = dict()
 
-    for record in seq_records:
-        seq_name = record.name
-        console.print(f'### Start Processing [{seq_name}] ###', style="yellow")
-
-        # ------------------------------------------------------------------------
-        # deal with N characters
-        # ------------------------------------------------------------------------
-        if args_dict['General Options']['debug']:
-            start_time = time.time()
-        
-        seq = str(record.seq.upper())
-
-        seqLenwN = len(seq)
-        window_length = args_dict['General Options']['window_length']
-        overlap_length = args_dict['General Options']['overlap_length']
-        step_length = window_length - overlap_length
-
-        total_task = max(1, (seqLenwN - window_length) // step_length + 1)
-        
-        tasks = [(cur + 1, total_task, seq[cur * step_length : (cur + 1) * step_length], args_dict) for cur in range(total_task)]
-
-        results = []
-        with Pool(processes = args_dict['General Options']['thread']) as pool:
-            for result, log_str in pool.imap_unordered(find_N, tasks):
-                if log_str:
-                    console.print(log_str)
-                results.append(result)
-
-        N_coordinate = pd.concat(results, ignore_index=True)
-        N_coordinate = N_coordinate.sort_values(by=['start']).reset_index(drop=True)
-
-
-        if N_coordinate.shape[0] > 0:
-            N_coordinate_new = pd.DataFrame(columns=['start', 'end'])
-
-            start = N_coordinate.loc[0, 'start']
-            end = N_coordinate.loc[0, 'end']
-            for i in range(1, N_coordinate.shape[0]):
-                if N_coordinate.loc[i, 'start'] != end:
-                    N_coordinate_new = pd.concat([N_coordinate_new, pd.DataFrame({'start': [start], 'end': [end]})], ignore_index=True)
-                    start = N_coordinate.loc[i, 'start']
-                end = N_coordinate.loc[i, 'end']
-
-            # add the last region
-            N_coordinate_new = pd.concat([N_coordinate_new, pd.DataFrame({'start': [start], 'end': [end]})], ignore_index=True)
-
-            # solve with 'old_index' and 'new_index'
-            N_coordinate_new['old_index'] = N_coordinate_new['end']
-            N_coordinate_new['new_index'] = N_coordinate_new['end']
-
-            # calculate new index
-            l = 0
-            for i in range(N_coordinate_new.shape[0]):
-                l += N_coordinate_new.loc[i,'end'] - N_coordinate_new.loc[i,'start']
-                N_coordinate_new.loc[i,'new_index'] -= l
-
-        if args_dict['General Options']['debug']:
-            end_time = time.time()
-            print(f"calculate coordinate transformation: {round(end_time - start_time, 2)} s")
-
-        # ------------------------------------------------------------------------
-        # decompose
-        # ------------------------------------------------------------------------
-        mask = [base != "N" for base in seq]
-        filter_seq = ''.join(compress(seq, mask))
-        seqLenwoN = len(filter_seq)
-        total_task = max(1, (seqLenwoN - overlap_length) // step_length + 1)
-
-        # ------------------------------------------------------------------------
-        # decompose
-        # ------------------------------------------------------------------------
-        if args_dict['General Options']['debug']:
-            start_time = time.time()
-        
-        cur = 0
-        tasks = []
-        while cur < total_task:
-            tasks.append(tuple([seq_name,
-                                cur + 1, 
-                                total_task, 
-                                args_dict,
-                                filter_seq[cur*step_length : cur*step_length + window_length]
-                                ]))
-            cur += 1
-        with Pool(processes = args_dict['General Options']['thread']) as pool:
-            results = []
-            for result, log_str in pool.imap_unordered(decompose_sequence, tasks):
-                if log_str:
-                    console.print(log_str)
-                results.append(result)
-            
-            pool.close()    # close the pool and don't receive any new tasks
-            pool.join()     # wait for all the tasks to complete
-            results = list(results)
-        
-        # ------------------------------------------------------------------------
-        # Merge and decide the representive of motifs
-        # ------------------------------------------------------------------------
-        if not args_dict['Decomposition Options']['no_denovo']:
-            motif_df_list = [result.motifs for _, _, _, _, result in results]
-            
-            cot = 1
-            with Pool(processes=args_dict['General Options']['thread']) as pool:
-                cot = 1
-                while len(motif_df_list) > 1:
-                    num = len(motif_df_list)
-                    tasks = [tuple([motif_df_list[i*2], motif_df_list[i*2+1], args_dict]) for i in range(num // 2)]
-                    if num % 2 == 1:
-                        remaining = motif_df_list[num-1]
-                    motif_df_list = list(pool.imap_unordered(merge_motifs, tasks))
-                    print(f'cycle {cot}...')
-                    cot += 1
-                    if num % 2 == 1:
-                        motif_df_list.append(remaining)
-
-            motifs_df = motif_df_list[0]  # ['motif', 'ref_motif', 'value']
-            motifs_df['canonical'] = motifs_df['motif'].apply(canonical_form)
-            # merge duplicates in single dataframe
-            selected_rows = [0]
-            for i in range(1, len(motifs_df)):
-                is_skip = False
-                for j in range(i):
-                    if motifs_df.loc[i, 'canonical'] == motifs_df.loc[j, 'canonical']:
-                        motifs_df.loc[i, 'value'] += motifs_df.loc[j, 'value']
-                        is_skip = True
-                        break
-                    if motifs_df.loc[i, 'canonical'] == canonical_form(rc(motifs_df.loc[j, 'motif'])):
-                        motifs_df.loc[i, 'value'] += motifs_df.loc[j, 'value']
-                        is_skip = True
-                        break
-                if not is_skip:
-                    selected_rows.append(i)
-
-            if motifs_df.shape[0] == 0:
-                continue
-            motifs_df = motifs_df.loc[selected_rows, :]
-            motifs_df = motifs_df.sort_values(by='value', ascending=False).reset_index(drop=True)
-            motifs_df = motifs_df.loc[: args_dict['Decomposition Options']['motifnum'] - 1, :]
-
-            console.print(f'Number of identified motif = {motifs_df.shape[0]}', style="white")
-
-            # ------------------------------------------------------------------------
-            # polish and refine
-            # ------------------------------------------------------------------------
-            # polish motif
-                # if in reference motif set, adjust to the reference form
-                # if reverse complementary sequence is in the reference motif set, invert and adjust form
-                # if not in the reference database, find the best form based on its start, 
-                # and add into database for other mutant motifs adjustment 
-            most_common_motif = motifs_df.loc[0, 'motif']
-
-            for idx in range(motifs_df.shape[0]):
-                # try to search in DB
-                min_distance = 1e6
-                motif = motifs_df.loc[idx, 'motif']
-                ref_motif = 'UNKNOWN'
-                motif_forms = rotate_strings(motif)  # get all format
-                max_distance = int(args_dict['Annotation Options']['finding_dist_ratio'] * len(motif))
-                for form in motif_forms:
-                    matches = tree.find(form, max_distance)  # find matched motif
-                    for dist, ref in matches:
-                        if dist < min_distance:
-                            motif = rc(form) if '(rc)' in ref_motif2name[ref] else form
-                            min_distance = dist
-                            ref_motif = rc(ref) if '(rc)' in ref_motif2name[ref] else ref
-                    
-                # cut the dimer or more
-                for form in motif_forms:
-                    is_cut = False
-                    while True:
-                        cur_is_cut = False
-                        for ref_motif_2 in ref_motif2name.keys():
-
-                            if len(ref_motif_2) == 1:
-                                continue
-
-                            if len(ref_motif_2) >= len(form):
-                                continue
-
-                            ratio = len(form) / len(ref_motif_2)
-
-                            if ratio > 3:
-                                continue
-
-                            min_ratio = min( abs(ratio - int(ratio)), abs(ratio - int(ratio) - 1) )
-                            if min_ratio >= 0.2:
-                                continue
-
-                            if form.startswith(ref_motif_2):
-                                before = edlib.align(form, ref_motif_2, mode='NW')['editDistance']
-                                after = edlib.align(form[len(ref_motif_2):], ref_motif_2, mode='NW')['editDistance']
-                                if after < before:
-                                    print(f"cut: {form} -> {form[len(ref_motif_2):]}\n\tdistance: {before} -> {after}")
-                                    form = form[len(ref_motif_2):]
-                                    min_distance_2 = before
-                                    motif = motif
-                                    ref_motif = ref_motif_2
-                                    is_cut = True
-                                    cur_is_cut = True
-                                    break
-                        if not cur_is_cut:
-                            break
-                    if is_cut:
-                        motifs_df.loc[idx, 'motif'] = form
-                        motifs_df.loc[idx, 'ref_motif'] = form
-                        if form not in ref_motif2name.keys():
-                            # add into bktree
-                            tree.add(form)
-                            ref_motif2name[form] = 'UNKNOWN'
-                            motif_rc = rc(motif)
-                            tree.add(motif_rc)
-                            ref_motif2name[motif_rc] = 'UNKNOWN(rc)'
-                        break
-                if is_cut:
-                    continue
-                # searched successfully
-                if min_distance < 1e6:
-                    motifs_df.loc[idx, 'motif'] = motif
-                    motifs_df.loc[idx, 'ref_motif'] = ref_motif
-                    motif2ref_motif[motif] = ref_motif
-                    continue
-                
-                # fail to search
-                min_index = seqLenwoN + 1e6
-                for form in motif_forms:
-                    index = filter_seq.find(form)
-                    if index < min_index:
-                        min_index = index
-                        motif = form
-                motifs_df.loc[idx, 'motif'] = motif
-                # add into reference (temp)
-                ### print(f'added {motif}')
-                tree.add(motif)
-                ref_motif2name[motif] = 'UNKNOWN'
-                motif_rc = rc(motif)
-                tree.add(motif_rc)
-                ref_motif2name[motif_rc] = 'UNKNOWN(rc)'
-        else:
-            motifs_df = pd.DataFrame(columns=['motif', 'ref_motif', 'value'])
-            most_common_motif = motif_records[0].seq.upper()
-        
-        # add reference motif
-        ref_motif2name['UNKNOWN'] = 'UNKNOWN'
-        if args_dict['Annotation Options']['force']:
-            tmp = []
-            for record in motif_records:
-                motif_name = record.name
-                motif = str(record.seq.upper())
-                tmp.append([motif, motif, 0])
-            added_motif = pd.DataFrame(tmp, columns=['motif', 'ref_motif', 'value'])
-            motifs_df = pd.concat([motifs_df, added_motif], ignore_index = True)
-
-        for i in range(motifs_df.shape[0]):
-            motif2ref_motif[motifs_df.loc[i, 'motif']] = motifs_df.loc[i, 'ref_motif']
-
-
-        ref_motif2name['UNKNOWN'] = 'UNKNOWN'
-
-        nondup = motifs_df['motif'].to_list()
-        nondup = list(set(nondup))
-
-        ###print(nondup)
-
-        for _, _, _, _, result in results:
-            result.motifs_list = nondup
-
-        if args_dict['General Options']['debug']:
-            end_time = time.time()
-            print(f"get motif: {round(end_time - start_time, 2)} s")
-
-
-        # ------------------------------------------------------------------------
-        # annotate
-        # ------------------------------------------------------------------------
-        if args_dict['General Options']['debug']:
-            start_time = time.time()
-        
-        cur = 0
-        tasks = results
-        results = []
-        with Pool(processes = args_dict['General Options']['thread']) as pool:  
-            for result, log_str in pool.imap_unordered(single_motif_annotation, tasks):
-                if log_str:
-                    console.print(log_str)
-                results.append(result)
-            del tasks
-            pool.close()
-            pool.join()
-                   
-        del results
-        
-        if args_dict['General Options']['debug']:
-            end_time = time.time()
-            print(f"annotate motif: {round(end_time - start_time, 2)} s")
-
-        if args_dict['General Options']['debug']:
-            start_time = time.time()
-
-        # ------------------------------------------------------------------------
-        # dynamic programming
-        # ------------------------------------------------------------------------
-
-        # parameters
-        match_score = args_dict['Annotation Options']['match_score']
-        mapped_len_dif_penalty = args_dict['Annotation Options']['lendif_penalty'] # hope mapped sequence is as long as the motif
-        gap_penalty = args_dict['Annotation Options']['gap_penalty']
-        distance_penalty = args_dict['Annotation Options']['distance_penalty']
-        perfect_bonus = args_dict['Annotation Options']['perfect_bonus']
-
-        length = len(filter_seq)
-        # Initialize dp and pre arrays
-        dp = np.zeros(length + 1, dtype=np.float64)
-        pre = np.full((length + 1, 4), None)  # (pre_i, motif_id, motif, dir)
-
-        idx = 0
-        current_pid = 1
-        df = pd.read_csv(f"{args_dict['I/O Options']['prefix']}_temp/{seq_name}_anno_1.csv")
-        anno_start = df['start'].values
-        anno_end = df['end'].values
-        anno_motif = df['motif'].values
-        anno_distance = df['distance'].values
-        anno_dir = df['dir'].values
-
-        # Dynamic programming loop
-        for i in range(1, length + 1):
-            # read annotation data
-            pid = (i - overlap_length) // step_length + 1
-            if pid > current_pid:
-                current_pid = pid
-                idx = 0
-                df = pd.read_csv(f"{args_dict['I/O Options']['prefix']}_temp/{seq_name}_anno_{pid}.csv")
-                anno_start = df['start'].values
-                anno_end = df['end'].values
-                anno_motif = df['motif'].values
-                anno_distance = df['distance'].values
-                anno_dir = df['dir'].values
-
-            # Skip one base
-            dp[i] = dp[i-1] - gap_penalty
-            pre[i] = (i-1, None, None, None)
-
-            # Efficiently iterate over merged_df without repeating checks
-            while idx < df.shape[0]:
-                if anno_end[idx] > i:
-                    break
-                if anno_end[idx] < i:
-                    idx += 1
-                    continue
-
-                pre_i = anno_start[idx]
-                motif = anno_motif[idx] ###if anno_dir[idx] == '+' else rc(anno_motif[idx])
-                distance = anno_distance[idx]
-                bonus = perfect_bonus * ( 2 * np.arctan(len(motif)/10) / np.pi ) * len(motif) if distance == 0 else 0
-                if len(motif) >= 2 and canonical_form(motif) == canonical_form(most_common_motif) and bonus > 0:
-                    bonus += 2
-                score = dp[pre_i] \
-                    + len(motif) * match_score \
-                    - abs(len(motif) - (i - pre_i)) * mapped_len_dif_penalty \
-                    - distance * distance_penalty \
-                    + bonus
-                if score > dp[i]:
-                    dp[i] = score
-                    pre[i] = (pre_i, idx, motif, anno_dir[idx])
-
-                idx += 1
-
-
-            # Print progress every 5000 iterations
-            if not args_dict['Output Options']['quiet'] and i % 100e3 == 0:
-                console.print(f'DP: {i // 1000} kbp is Done!', style="white")
-
-        console.print('DP complete!', style="green")
-
-        # retrace
-        idx = length
-        next_coords = [None] * (length + 1)  # to store next coordinates
-        next_motif = [None] * (length + 1)   # to store motif references
-        next_dir = [None] * (length + 1)
-
-        while idx >= 0:
-            if pre[idx][0] is not None:
-                if pre[idx][1] is not None:  # matched a motif
-                    next_coords[pre[idx][0]] = idx
-                    next_motif[pre[idx][0]] = pre[idx][2]
-                    next_dir[pre[idx][0]] = pre[idx][3]
-                    idx = pre[idx][0]
-                else:  # skipped a base
-                    next_coords[idx - 1] = idx
-                    next_motif[idx - 1] = None
-                    next_dir[idx - 1] = None
-                    idx -= 1
-            else:
-                idx -= 1
-  
-        console.print('Retrace Complete!', style="green")
-
-        if args_dict['General Options']['debug']:
-            end_time = time.time()
-            print(f"DP and retrace: {round(end_time - start_time, 2)} s")
-
-        if args_dict['General Options']['debug']:
-            start_time = time.time()
-
-        console.print(f'### Organizing results ###', style="yellow")
-
-        # output motif annotation file
-        annotation_data = []
-        idx = 0
-        
-
-        while idx < length:
-            if pre[idx][0] is None and next_coords[idx] is not None:    # is a start site
-                idx2 = idx
-                start, end = idx, 0
-                cur_motif, cur_dir, rep_num, score, max_score, cigar_string = None, None, 0, 0, 0, ''
-                skip_num = 0
-                row = None
-
-                while next_coords[idx2] is not None:
-                    ############  cycle start  ############
-                    '''
-                    logic:
-                    1. motif aligned
-                        - output if have a different motif / dir
-                        - add skip cigar string
-                        - add score of alignment and cigar string
-                        - check if score is max
-
-                    2. motif unaligned
-                        - add skip penalty
-                        - check if score is lower than 0.98 * max_score
-                    '''
-                    ###print(idx2)
-                    motif = next_motif[idx2]
-                    dir = next_dir[idx2]
-                    if motif is not None:    # match a motif 
-                        if cur_motif != motif or cur_dir != dir:       # split the annotation and init
-                            if cur_motif is not None and row is not None:
-                                annotation_data.append(row)
-                            start, cur_motif, cur_dir, rep_num, score, max_score, cigar_string = idx2, motif, dir, 0, 0, 0, ''
-                            skip_num = 0
-
-                        if skip_num:
-                            cigar_string += f'{skip_num}N'
-                            skip_num = 0
-
-                        rep_num += 1
-                        tmp_motif = motif if dir == '+' else rc(motif)
-                        distance, cigar = get_distacne_and_cigar(tmp_motif, filter_seq[idx2: next_coords[idx2]])
-                        '''if dir == "-":
-                            print(distance, cigar)'''
-                        if idx2 == 0:
-                            distance -= len(motif) - len(filter_seq[idx2: next_coords[idx2]])
-                        score += len(cur_motif) * match_score - distance * distance_penalty
-                        cigar_string += cigar + '/'
-                        if score >= max_score:
-                            row = [seq_name, seqLenwN, start, next_coords[idx2], motif, dir, rep_num, score, cigar_string]
-                            max_score = score
-                    else:               # skip a base
-                        if idx2 != 0 and cur_motif is not None:
-                            skip_num += 1
-                            score -= gap_penalty
-                            if score < 0.98 * max_score:
-                                ###if row not in annotation_data:
-                                annotation_data.append(row)
-                                cur_motif, cur_dir, rep_num, score, max_score, cigar_string = None, None, 0, 0, 0, ''
-                                skip_num = 0
-
-                
-                    idx2 = next_coords[idx2]
-                    end = idx2
-                    ############  cycle end  ############
-                if row is not None:
-                    annotation_data.append(row)
-            break
-
-        unique_results = {tuple(r) for r in annotation_data}
-        annotation_data = [list(r) for r in unique_results]
-
-
-        for j in range(1, len(annotation_data)):
-            if annotation_data[j] == annotation_data[j-1]:
-                raise ValueError(f"Duplicate found")
-
-        annotation = pd.DataFrame(annotation_data, columns=['seq','length','start','end','motif', 'dir', 'rep_num','score','CIGAR'])
-        annotation = annotation.reset_index(drop=True)
-        
-        # coordinates transformation with N character
-        if N_coordinate.shape[0]:
-            for i in range(annotation.shape[0]):
-                # edit cigar string
-                old_cigar = annotation.loc[i, 'CIGAR']
-                new_cigar, cot = '', ''
-                idx = 0
-                cur = annotation.loc[i, 'start']
-                while idx < len(old_cigar):
-                    symbol = old_cigar[idx]
-                    if symbol == '/':
-                        new_cigar += '/'
-                    elif symbol in ['=','X','I','N']:
-                        length = int(cot)
-                        tmp = N_coordinate_new[(N_coordinate_new['new_index'] > cur) & (N_coordinate_new['new_index'] <= cur + length)]
-                        if tmp.shape[0]:    # if there is N character in this region
-                            
-                            for row in tmp.itertuples():
-                                length -= row.new_index - cur
-                                new_cigar += f'{row.new_index - cur}{symbol}'
-                                new_cigar += f'{row.end - row.start}N'
-                                cur += row.new_index - cur
-                                ### new_cigar += f'{N_coordinate_new['new_index'] - cur}{symbol}'
-                            new_cigar += f'{length}{symbol}' if length != 0 else ''
-                            cur += length
-                        else:
-                            new_cigar += f'{length}{symbol}'
-                            cur += length
-                        cot = ''
-                    elif symbol == 'D':
-                        new_cigar += f'{cot}{symbol}'
-                        cot = ''
-                    else:
-                        cot += symbol
-                    
-                    annotation.loc[i, 'CIGAR'] = new_cigar
-                    idx += 1
-                
-                
-                # transform start site
-                tmp = N_coordinate_new[N_coordinate_new['new_index'] <= int(annotation.loc[i,'start'])]
-                if tmp.shape[0]:
-                    tmp = tmp.reset_index(drop=True)
-                    l = tmp.shape[0] - 1
-                    annotation.loc[i,'start'] += tmp.loc[l,'old_index'] - tmp.loc[l,'new_index']
-                # transform end site
-                tmp = N_coordinate_new[N_coordinate_new['new_index'] <= int(annotation.loc[i,'end'])]
-                if tmp.shape[0]:
-                    tmp = tmp.reset_index(drop=True)
-                    l = tmp.shape[0] - 1
-                    annotation.loc[i,'end'] += tmp.loc[l,'old_index'] - tmp.loc[l,'new_index'] 
-        annotation_list.append(annotation)
-        console.print(f'### Complete [{seq_name}] ###\n', style="yellow")
-
-    # ------------------------------------------------------------------------
-    # output
-    # ------------------------------------------------------------------------
-
-    merged_annotation = pd.concat(annotation_list, ignore_index=True)
-    merged_annotation = merged_annotation[merged_annotation['score'] >= args_dict['Output Options']['score']]
-    merged_annotation = merged_annotation.sort_values(by=["seq", "start"]).reset_index(drop=True)
-    merged_annotation.to_csv(f"{args_dict['I/O Options']['prefix']}.concise.tsv", sep = '\t', index = False)
-
-
-    if args_dict['General Options']['debug']:
-        end_time = time.time()
-        print(f"make concise.tsv: {round(end_time - start_time, 2)} s")
-
-    console.print('output concise.tsv!', style="green")
-
-    if args_dict['General Options']['debug']:
-        start_time = time.time()
-
-    if not args_dict['General Options']['debug']:
-        subprocess.run(f"rm -r {args_dict['I/O Options']['prefix']}_temp", shell = True)
-
-    # ------------------------------------------------------------------------
-    # make file - *.annotation.tsv
-    # ------------------------------------------------------------------------
-    detail_annotation = []
-    for record in seq_records:
-        seq_name = record.name
-        sequence = str(record.seq.upper())
-        seqLen = len(sequence)
-        tmp = merged_annotation[merged_annotation['seq'] == seq_name]
-        
-        for index, row in tmp.iterrows():
-            idx = row.start
-            cigar_string = row.CIGAR
-            dir = row.dir
-            j = 0
-            start, length, dist, actual_motif, sub_cigar, num = row.start, 0, 0, '', '', ''
-            while j < len(cigar_string):
-                symbol = cigar_string[j]
-                if symbol == '/':
-                    detail_annotation.append([seq_name, seqLen, start, start + length, row.motif, dir, dist, actual_motif, sub_cigar])
-                    start = start + length
-                    length, dist, actual_motif, sub_cigar = 0, 0, '', ''
-                elif symbol in ['=','X','I']:
-                    actual_motif += sequence[start + length : start + length + int(num)]
-                    length += int(num)
-                    if symbol != '=':
-                        dist += int(num)
-                    sub_cigar += f'{num}{symbol}'
-                    num = ''
-                elif symbol == 'D':
-                    sub_cigar += f'{num}D'
-                    dist += int(num)
-                    num = ''
-                elif symbol == 'N':
-                    actual_motif += sequence[start + length : start + length + int(num)]
-                    length += int(num)
-                    sub_cigar += f'{num}N'
-                    num = ''
-                else:
-                    num += symbol
-                j += 1
-            ### detail_annotation.append([seq_name, seqLen, start, start + length, row.motif, actual_motif, sub_cigar])
-
-    detailed_df = pd.DataFrame(data = detail_annotation, columns = ['seq','length','start','end','motif','dir','distance','actual_motif','CIGAR'])
-    detailed_df.to_csv(f"{args_dict['I/O Options']['prefix']}.annotation.tsv", sep = '\t', index = False)
-
-    if args_dict['General Options']['debug']:
-        end_time = time.time()
-        print(f"make annotation.tsv: {round(end_time - start_time, 2)} s")
-
-    console.print('output annotation.tsv!', style="green")
-
-    if args_dict['General Options']['debug']:
-        start_time = time.time()
-
-    # ------------------------------------------------------------------------
-    # make file - *.motif.tsv
-    # ------------------------------------------------------------------------
-    rep_num = []
-    motif_group = merged_annotation.groupby('motif')['rep_num'].sum().reset_index()
-    motif_df = motif_group[['motif', 'rep_num']].copy()
-    motif_df = motif_df.sort_values(by=['rep_num'], ascending = False).reset_index(drop=True)
-    motif_df.index.name = 'id'
-    motifs_list = motif_df['motif'].to_list()
-    tmp = []
-    for index, row in motif_df.iterrows():
-        tmp.append(ref_motif2name[motif2ref_motif[row.motif]])
-
-    label_col = {'label' : tmp}
-    label_col_df = pd.DataFrame(label_col)
-    motif_df = pd.concat([motif_df, label_col_df], axis=1)
-    motif_df.to_csv(f"{args_dict['I/O Options']['prefix']}.motif.tsv", sep = '\t', index = True, index_label='id')
-
-    motif2id = {row['motif'] : index for index, row in motif_df.iterrows()}
-    
-    if args_dict['General Options']['debug']:
-        end_time = time.time()
-        print(f"make motif.tsv: {round(end_time - start_time, 2)} s")
-
-    console.print('output motif.tsv!', style="green")
-
-    if args_dict['General Options']['debug']:
-        start_time = time.time()
-
-    # ------------------------------------------------------------------------
-    # make file - *.dist.tsv
-    # ------------------------------------------------------------------------
-    all_df_row = []
-    for motif in motifs_list:
-        all_df_row.extend(calculate_distance(motif, motifs_list, motif2id))
-        
-
-    distance_df = pd.DataFrame(all_df_row, columns = ['ref','query','dist','is_rc'])
-    distance_df['sum'] = distance_df['ref'] + distance_df['query']
-    distance_df = distance_df[distance_df['ref'] != distance_df['query']]
-    distance_df = distance_df.sort_values(by=['dist','sum','ref','query']).reset_index(drop=True)
-    distance_df.to_csv(f"{args_dict['I/O Options']['prefix']}.dist.tsv", sep = '\t', index = False, columns = ['ref','query','dist','is_rc'])
-
-    if args_dict['General Options']['debug']:
-        end_time = time.time()
-        print(f"make dist.tsv: {round(end_time - start_time, 2)} s")
-
-    console.print('output dist.tsv!', style="green")
+    # preprocess sequences (remove invalid characters and split into windows)
+    seqname2len: Dict[str, int] = {record.id: len(record.seq) for record in seq_records}
+    seqname2seq: Dict[str, str] = {record.id: str(record.seq.upper()) for record in seq_records}
+    coordinates_raw2valid: Dict[str, np.ndarray] = {}
+    coordinates_valid2raw: Dict[str, np.ndarray] = {}
+    have_invalid: bool = False
+    with Pool(processes=THREADS) as pool:
+        decompose_tasks: List[Tuple[str, int, int, np.ndarray]] = []
+        for result in tqdm(
+            pool.imap(preprocess_sequence, seq_records, chunksize=1),
+            total=len(seq_records),
+            desc="Preprocessing"
+        ):
+            seq_name: str = result["seq_name"]
+            coordinates_raw2valid[seq_name] = result["coordinates_raw2valid"]
+            coordinates_valid2raw[seq_name] = result["coordinates_valid2raw"]
+            have_invalid |= result["have_invalid"]
+            decompose_tasks.extend(result["tasks"])
+
+    # de novo get motifs
+    if not cfg.get("no_denovo", False):
+        motif_catalog_list: List[pl.DataFrame] = [motif_catalog]
+        decompose_results: List['Decompose'] = []
+        with Pool(processes=THREADS) as pool:
+            for result in tqdm(
+                pool.imap(decompose_sequence, decompose_tasks, chunksize=1),
+                total=len(decompose_tasks),
+                desc="Decomposing"
+            ):
+                decompose_results.append(result)
+                motif_catalog_list.append(result.motif_df)
+        motif_catalog: pl.DataFrames = pl.concat(motif_catalog_list)
+        del motif_catalog_list
+
+    # get canonical motif form
+    motif_catalog = motif_catalog.with_columns(
+        pl.col("motif").map_elements(canonicalize_motif_str)
+        .alias("canonical_motif")
+    )
+    motif_catalog_database: pl.DataFrame = motif_catalog.filter(pl.col("source") == "database")
+    motif_catalog_denovo: pl.DataFrame = motif_catalog.filter(pl.col("source") == "denovo")
+
+    # canonical motif deduplication
+    motif_catalog_denovo = motif_catalog_denovo.group_by("canonical_motif").agg(
+        pl.col("motif").first().alias("motif"),
+        pl.col("ref_seq").first().alias("ref_seq"),
+        pl.col("name").first().alias("name"),
+        pl.col("copy_number").sum().alias("copy_number"),
+        pl.col("source").first().alias("source")
+    ).select(["motif", "ref_seq", "name", "copy_number", "source", "canonical_motif"])
+
+    # pick top motif
+    motif_catalog_denovo = motif_catalog_denovo.sort("copy_number", descending=True).head(cfg["motifnum"])
+    motif_catalog = pl.concat([motif_catalog_database, motif_catalog_denovo])
+
+    # motif iteration polishing
+    motif_catalog = polish_motif(motif_catalog, cfg)
+
+    motif_catalog = motif_catalog.group_by("motif").agg(
+        pl.col("ref_seq").first().alias("ref_seq"),
+        pl.col("name").first().alias("name"),
+        pl.col("copy_number").max().alias("copy_number"),
+        pl.col("source").first().alias("source"),
+        pl.col("canonical_motif").first().alias("canonical_motif")
+    ).select(["motif", "ref_seq", "name", "copy_number", "source", "canonical_motif"])
+
+    # remove motifs from database if no_denovo or force are set
+    if not(cfg.get("no_denovo", False) or cfg.get("force", False)):
+        motif_catalog = motif_catalog.filter(pl.col("source") == "denovo")
+
+    if cfg.get("debug", False):
+        motif_catalog.write_csv(f"{JOB_DIR}/motif_catalog.tsv", separator="\t", null_value=".")
+
+    # update candidate motif set for annotation
+    candidate_motifs: List[str] = motif_catalog["motif"].to_list()
+    for seg in decompose_results:
+        seg.motif_list = candidate_motifs
+
+    # annoate sequence
+    dp_tasks: List[Tuple(str, str, pl.DataFrame)] = []
+    tmp_df_list: List[pl.DataFrame] = []
+    cur_seq_name: str = None
+
+    for seg in tqdm(decompose_results, desc="Annotating"):
+        seg: Decompose = annotate_sequence(seg)
+        seq_name: str = "_".join(seg.name.split("_")[:-1])
+        if seq_name != cur_seq_name:
+            if len(tmp_df_list) != 0:
+                merged_df = pl.concat(tmp_df_list)
+                dp_tasks.append((cur_seq_name, seqname2seq[cur_seq_name], merged_df))
+                tmp_df_list = []
+                if cfg.get("debug", False):
+                    merged_df.write_csv(f"{JOB_DIR}/annotation/{cur_seq_name}.tsv", separator="\t", null_value=".")
+            cur_seq_name = seq_name
+        tmp_df_list.append(seg.anno_df)
+    if len(tmp_df_list) != 0:
+        merged_df = pl.concat(tmp_df_list)
+        dp_tasks.append((seq_name, seqname2seq[seq_name], merged_df))
+        if cfg.get("debug", False):
+            merged_df.write_csv(f"{JOB_DIR}/annotation/{cur_seq_name}.tsv", separator="\t", null_value=".")
+    del tmp_df_list
+
+    # dynamic programming
+    dp_results: List[pl.DataFrame] = []
+    with Pool(processes=THREADS) as pool:
+        for result in tqdm(
+            pool.imap(run_dp, dp_tasks),
+            total=len(dp_tasks),
+            desc="DPing"
+        ):
+            dp_results.append(result)
+
+    anno_df: pl.DataFrame = pl.concat(dp_results)
+    anno_df = anno_df.with_columns(
+        pl.col("chrom").replace_strict(seqname2len).alias("length")
+    )    
+
+    # transform coordinates
+    if have_invalid:
+        anno_df = transform_coords(anno_df, coordinates_valid2raw)
+
+    anno_df = anno_df.with_columns(
+        pl.col("start") + 1, # transform to 1-based coordinates
+        pl.col("end") + 1
+    ).select(["chrom", "length", "start", "end", "motif", "orientation", "sequence", "score", "cigar"])
+
+    # add copy number information
+    anno_df = anno_df.with_columns(
+        pl.col("motif").map_elements(lambda x: len(x)).alias("motif_length")
+    )
+    anno_df = anno_df.with_columns(
+        pl.struct(["cigar", "motif_length"])
+        .map_elements(lambda x: get_copy_number(x["cigar"], x["motif_length"]), return_dtype=pl.Float64)
+        .alias("copyNumber")
+    )
+
+    # make *.motif.tsv
+    motif_df = (
+        anno_df
+        .group_by("motif")
+        .agg(pl.col("copyNumber").sum().round(1).alias("copyNumber"))
+    )
+    motif_df = motif_df.filter(pl.col("motif").is_not_null()).sort(["copyNumber"], descending=True).with_row_index("id")
+    tmp: pl.DataFrame = (
+        motif_catalog
+        .select(["motif", "name"])
+        .with_columns(pl.col("name").alias("label"))
+    )
+    motif_df = (
+        motif_df
+        .join(tmp, on="motif", how="left")
+        .select(["id", "motif", "copyNumber", "label"])
+    )
+    motif_df.write_csv(f"{cfg['prefix']}.motif.tsv", separator="\t", null_value=".")
+    logger.info(f"Wrote {cfg['prefix']}.motif.tsv")
+
+    # make *.dist.tsv
+    id2motif: Dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(row["motif"]) for row in motif_df.iter_rows(named=True)}
+    id2motif_rc: Dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(rc(row["motif"])) for row in motif_df.iter_rows(named=True)}
+    motif_num: int = len(id2motif)
+    rows: List[Dict] = [{
+        "target": i,
+        "query": j,
+        "distance": calculate_edit_distance_between_motifs(id2motif[i], id2motif[j]),
+        "sum_copyNumber": motif_df["copyNumber"][i] + motif_df["copyNumber"][j],
+        "is_rc": False
+    } for i in range(motif_num) for j in range(i + 1, motif_num)]
+    rows_rc: List[Dict] = [{
+        "target": i,
+        "query": j,
+        "distance": calculate_edit_distance_between_motifs(id2motif[i], id2motif_rc[j]),
+        "sum_copyNumber": motif_df["copyNumber"][i] + motif_df["copyNumber"][j],
+        "is_rc": True
+    } for i in range(motif_num) for j in range(i, motif_num)]
+    dist_df: pl.DataFrame = pl.DataFrame(rows + rows_rc)
+    dist_df = dist_df.sort(["distance", "sum_copyNumber", "target", "query"]).select(["target", "query", "distance", "is_rc"])
+    dist_df.write_csv(f"{cfg['prefix']}.distance.tsv", separator="\t", null_value=".")
+    logger.info(f"Wrote {cfg['prefix']}.distance.tsv")
+
+    # make *.annotation.tsv
+    anno_df = (
+        anno_df
+        .join(motif_df.select(["motif", "id"]), on="motif", how="left")
+        .with_columns(pl.col("id").alias("motif"))
+    )
+    anno_df.select(["chrom", "length", "start", "end", "motif", "orientation", "sequence", "score", "cigar"]).write_csv(f"{cfg['prefix']}.annotation.tsv", separator="\t", null_value=".")
+    logger.info(f"Wrote {cfg['prefix']}.annotation.tsv")
+
+    # make *.concise.tsv
+    concise_df = (
+        anno_df
+        .group_by("chrom")
+        .agg(
+            pl.col("length").first().alias("length"),
+            pl.col("start").min().alias("start"),
+            pl.col("end").max().alias("end"),
+            pl.col("motif")
+                .drop_nulls()
+                .str.join(",")
+                .alias("motif"),
+            pl.col("orientation")
+                .drop_nulls()
+                .str.join(",")
+                .alias("orientation"),
+            pl.col("score").sum().alias("score"),
+            pl.col("cigar").str.join("").alias("cigar"),
+            pl.col("motif").drop_nulls().last().alias("last_motif"),
+            pl.col("copyNumber").sum().round(1).alias("copyNumber"),
+        )
+    )
+    concise_df = concise_df.filter(pl.col("score") >= cfg["min_score"])
+    concise_df = concise_df.select(["chrom", "length", "start", "end", "motif", "orientation", "copyNumber", "score", "cigar"])
+    concise_df.write_csv(f"{cfg['prefix']}.concise.tsv", separator="\t", null_value=".")
+    logger.info(f"Wrote {cfg['prefix']}.concise.tsv")
+
+    END_TIME: float = time.time()
+    TIME_USED: float = round(END_TIME - START_TIME, 2)
+    logger.info(f"Time used: {TIME_USED:.2f} seconds")
+
+    # make web_summary.html # TODO: implement this
+    is_empty: bool = len(anno_df.filter(pl.col("motif").is_not_null())) == 0
+    if not cfg["skip_report"] and not is_empty:            
+        # import utils
+        from vampire._report_utils import make_stats, make_report
+        # add data
+        cfg["time_used"] = TIME_USED
+        cfg["subcommand"] = "anno"
+        # make stats and report
+        data: dict[str, Any] = make_stats(cfg)
+        make_report(JOB_DIR, str(files("vampire.resources").joinpath("anno_web_summary_template.html")), data)
+        # copy web summary file
+        web_summary_src = f"{JOB_DIR}/web_summary.html"
+        web_summary_dst = f"{cfg["prefix"]}.web_summary.html"
+        shutil.copy2(web_summary_src, web_summary_dst)
+        logger.info(f"Generated web summary: {web_summary_dst}")
+
+    logger.info("Bye.")
+
+    # copy log file
+    shutil.copy2(f"{JOB_DIR}/log.log", f"{cfg['prefix']}.log")

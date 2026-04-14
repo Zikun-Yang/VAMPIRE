@@ -99,6 +99,27 @@ def make_stats(params: dict) -> dict:
             }
             data.update(scan_extra)
             logger.debug(f"Made scan extra statistics")
+
+        case "anno":
+            import vampire as vp
+            adata = vp.pp.read_anno(f"{params['prefix']}.annotation.tsv")
+            copy_number_list: List[float] = adata.obs["copy_number"]
+            anno_extra = {
+                "AUTO_MODE": params["auto"],
+                "KSIZE": params["ksize"],
+                "ALIGNMENT_PARAMETERS": f"{params['match_score']}, {params['mismatch_penalty']}, {params['gap_open_penalty']}, {params['gap_extend_penalty']}",
+                "MIN_ALIGNMENT_SCORE": params["min_score"],
+                "NUMBER_OF_SAMPLES": adata.obs.shape[0],
+                "NUMBER_OF_MOTIFS": adata.var.shape[0],
+                "MIN_COPY_NUMBER": copy_number_list.min(),
+                "MEAN_COPY_NUMBER": round(copy_number_list.mean(), 1),
+                "MEDIAN_COPY_NUMBER": copy_number_list.median(),
+                "MAX_COPY_NUMBER": copy_number_list.max(),
+                "WATERFALL_PLOT": "to do...",
+            }
+            data.update(anno_extra)
+            logger.debug(f"Made anno extra statistics")
+
         case _:
             raise ValueError(f"Invalid subcommand: {params['subcommand']}")
     return data

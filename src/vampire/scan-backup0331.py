@@ -1,5 +1,4 @@
 from __future__ import annotations
-from os import pread
 from typing import TYPE_CHECKING
 from typing import List, Dict, Tuple, Any, Optional, Iterator, NamedTuple
 
@@ -29,16 +28,6 @@ from vampire._report_utils import(
     get_copy_number,
     calculate_alignment_metrics,
     calculate_nucleotide_composition
-)
-from vampire._utils import(
-    encode_seq_to_array,
-    decode_array_to_seq,
-    compress_homopolymers,
-    decompress_array,
-    encode_array_to_int,
-    decode_int_to_array,
-    canonicalize_motif,
-    is_periodic_seq,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,6 +96,290 @@ def split_fasta_by_window(fasta: Iterator[SeqRecord], seq_win_size: int, seq_ovl
 # codes for sequence processing utilities
 #
 """
+def encode_seq_to_array(seq: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Encode a sequence into an integer array with homopolymer compression.
+    A=0, C=1, G=2, T=3, N and other invalid characters are encoded as -1.
+    Homopolymer runs (poly-A/T/C/G) are collapsed.
+    Input:
+        seq: str, the sequence to encode
+    Output:
+        Tuple[np.ndarray, np.ndarray]: (compressed_encoded_seq, counts)
+        - compressed_encoded_seq: the encoded sequence with homopolymers collapsed
+        - counts: array representing the number of bases in each homopolymer run
+    Example:
+        "ATAAACG" -> (array([0,3,0,1,2]), array([1,1,3,1,1]))
+        which represents: A(1), T(1), A(3), C(1), G(1)
+    """
+    encoded_seq = ENCODE_TABLE[np.frombuffer(seq.encode(), dtype=np.uint8)]
+    return encoded_seq
+
+def decode_array_to_seq(encoded_seq: np.ndarray) -> str:
+    """
+    Decode an encoded sequence into a string
+    Input:
+        encoded_seq: np.ndarray, the encoded sequence, 0 - 3 for A, C, G, T, -1 is invalid
+    Output:
+        str, the decoded sequence
+    """
+    lut = np.array(['A', 'C', 'G', 'T'], dtype='<U1')
+    return ''.join(lut[encoded_seq])
+
+@numba.njit(cache=True)
+def compress_homopolymers(encoded_seq: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compress homopolymer runs in an encoded sequence and return compressed sequence with counts.
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        np.ndarray, compressed sequence with homopolymers collapsed
+        np.ndarray, counts for each base in compressed sequence
+    """
+    n = len(encoded_seq)
+    if n == 0:
+        return np.empty(0, dtype=np.int8), np.empty(0, dtype=np.int32)
+    
+    # Pre-allocate arrays (worst case: no compression, same size)
+    compressed = np.empty(n, dtype=np.int8)
+    counts = np.empty(n, dtype=np.int32)
+    
+    compressed_idx = 0
+    i = 0
+    
+    while i < n:
+        current_base = encoded_seq[i]
+        count = 1
+        
+        # Count consecutive identical bases (including invalid bases as separate)
+        while i + count < n and encoded_seq[i + count] == current_base:
+            count += 1
+        
+        # Store compressed base and count
+        compressed[compressed_idx] = current_base
+        counts[compressed_idx] = count
+        compressed_idx += 1
+        i += count
+    
+    # Trim to actual size
+    return compressed[:compressed_idx], counts[:compressed_idx]
+
+@numba.njit(cache=True)
+def decompress_array(compressed_seq: np.ndarray, counts: np.ndarray) -> np.ndarray:
+    """
+    Decompress a compressed sequence and counts into an encoded sequence
+    Input:
+        compressed_seq: np.ndarray, compressed sequence
+        counts: np.ndarray, counts
+    Output:
+        np.ndarray, the decompressed encoded sequence
+    """
+    return np.repeat(compressed_seq, counts)
+
+@numba.njit(cache=True) # TODO CHANGE
+def encode_array_to_int_fast(encoded_seq: np.ndarray) -> np.int64:
+    """
+    Convert an encoded sequence (array) to an integer value for small k (k <= 31).
+    Uses numba for acceleration. A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        np.int64: the integer encoding of the encoded sequence, or -1 if invalid
+    Note:
+        Only works for k <= 31 (fits in int64). Returns -1 for invalid sequences.
+    """
+    k = len(encoded_seq)
+    if k > 31:
+        return -1  # cannot fit in int64
+    value = np.int64(0)
+    mask = (np.int64(1) << (2 * k)) - 1
+    for i in range(k):
+        b = encoded_seq[i]
+        if b == -1 or b < 0 or b > 3:
+            return -1
+        value = ((value << 2) | np.int64(b)) & mask
+    return value
+
+def encode_array_to_int(encoded_seq: np.ndarray) -> int | None: # TODO CHANGE
+    """
+    Convert an encoded sequence (array) to an integer value, A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3, invalid=-1)
+    Output:
+        int | None: the integer encoding of the encoded sequence, or None if invalid
+    Note:
+        For k <= 31, uses numba-accelerated version. For k > 31, uses Python implementation.
+    """
+    k = len(encoded_seq)
+    if k <= 31:
+        result = encode_array_to_int_fast(encoded_seq)
+        return int(result) if result != -1 else None
+    else:
+        # for large k, use Python implementation
+        value = 0
+        mask = (1 << (2 * k)) - 1
+        for i, b in enumerate(encoded_seq):
+            if b == -1 or b < 0 or b > 3:
+                return None
+            value = ((value << 2) | int(b)) & mask
+        return value
+
+@numba.njit(cache=True)
+def decode_int_to_array_fast(value: np.int64, k: int) -> np.ndarray: # TODO CHANGE
+    """
+    Decode an integer value into an encoded sequence (array) for small k (k <= 31).
+    Uses numba for acceleration. A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        value: np.int64, the integer to decode
+        k: int, the length of the encoded sequence
+    Output:
+        np.ndarray, the decoded encoded sequence (array)
+    Note:
+        Only works for k <= 31 (fits in int64).
+    """
+    arr = np.empty(k, dtype=np.int8)
+    val = value
+    for i in range(k-1, -1, -1):
+        arr[i] = val & 3
+        val >>= 2
+    return arr
+
+def decode_int_to_array(value: int, k: int) -> np.ndarray: # TODO CHANGE
+    """
+    Decode an integer value into an encoded sequence (array), A=0, C=1, G=2, T=3, invalid=-1
+    Input:
+        value: int, the integer to decode
+        k: int, the length of the encoded sequence
+    Output:
+        np.ndarray, the decoded encoded sequence (array)
+    Note:
+        For k <= 31, uses numba-accelerated version. For k > 31, uses Python implementation.
+    """
+    if k <= 31:
+        return decode_int_to_array_fast(np.int64(value), k)
+    else:
+        # for large k, use Python implementation
+        arr = np.empty(k, dtype=np.int8)
+        val = value
+        for i in range(k-1, -1, -1):
+            arr[i] = val & 3
+            val >>= 2
+        return arr
+
+@numba.njit(cache=True)
+def canonicalize_motif(encoded_motif):
+    """
+    Canonicalize motif using Booth algorithm (O(n)).
+    Returns the lexicographically smallest cyclic rotation.
+    Input:
+        encoded_motif: np.ndarray, encoded motif (A=0, C=1, G=2, T=3)
+    Output:
+        np.ndarray: the canonicalized (lexicographically smallest) cyclic rotation
+    """
+    n = len(encoded_motif)
+    if n == 0:
+        return encoded_motif
+
+    i, j, k = 0, 1, 0
+
+    while i < n and j < n and k < n:
+        a = encoded_motif[(i + k) % n]
+        b = encoded_motif[(j + k) % n]
+
+        if a == b:
+            k += 1
+        elif a > b:
+            i = i + k + 1
+            if i <= j:
+                i = j + 1
+            k = 0
+        else:
+            j = j + k + 1
+            if j <= i:
+                j = i + 1
+            k = 0
+
+    start = i if i < j else j
+
+    res = np.empty(n, dtype=encoded_motif.dtype)
+    for t in range(n):
+        res[t] = encoded_motif[(start + t) % n]
+
+    return res
+
+@numba.njit(cache=True)
+def is_periodic_seq(encoded_seq: np.ndarray) -> Tuple[bool, int]:
+    """
+    Check if a encoded sequence is periodic
+    Input:
+        encoded_seq: np.ndarray, encoded sequence (A=0, C=1, G=2, T=3)
+    Output:
+        bool: True if the encoded sequence is periodic
+        int: the minimal period of the encoded sequence
+    """
+    k = len(encoded_seq)
+
+    if k <= 1:
+        return False, k
+
+    # prefix function
+    pi = np.zeros(k, dtype=np.int32)
+
+    j = 0 # j is the length of the longest proper prefix of the substring
+    for i in range(1, k): # i is the current position in the sequence
+        while j > 0 and encoded_seq[i] != encoded_seq[j]:
+            j = pi[j - 1]
+
+        if encoded_seq[i] == encoded_seq[j]:
+            j += 1
+
+        pi[i] = j
+
+    period = k - pi[k - 1]
+
+    is_periodic = period < k and k % period == 0
+
+    return is_periodic, period
+
+def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> int:
+    """
+    Calculate the edit distance between two motifs
+    Input:
+        motif_i: np.ndarray
+        motif_j: np.ndarray
+    Output:
+        edit_distance: int
+    """
+    # m1 is the longer motif
+    if len(m1) < len(m2):
+        m1, m2 = m2, m1
+
+    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+        seq = m1,
+        motif = m2,
+        band_width = len(m2),
+        align_to_end = True,
+        anchor_row = -1, # no anchor
+        compare_row = -1, # no compare
+    )
+                
+    state: int= np.argmax(score_array[len(m1) - 1, :]) # 0 -> M, 1 -> I, 2 -> D
+    best_j: int = band_argmax_j[len(m1) - 1, state]
+
+    # calculate edit distance from traceback
+    ops, _, _ = traceback_banded_roll_motif(
+        trace_M = trace_M,
+        trace_I = trace_I,
+        trace_D = trace_D,
+        best_i = len(m1),
+        best_j = best_j,
+        m = len(m2),
+        seq = m1,
+        motif = m2
+    )
+    # count edit operations: 'X' (mismatch), 'I' (insertion), 'D' (deletion)
+    edit_distance = sum(1 for op in ops if op in ['X', 'I', 'D'])
+    return edit_distance
+
 def get_most_frequent_kmer(encoded_seq: np.ndarray, k: int) -> Tuple[np.ndarray | None, int]:
     """
     Get the most frequent canonical k-mer in the sequence
@@ -319,47 +592,6 @@ def get_most_frequent_kmer(encoded_seq: np.ndarray, k: int) -> Tuple[np.ndarray 
         mf_array = mf_canonical_array
 
     return mf_array, mf_count
-
-def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> int:
-    """
-    Calculate the edit distance between two motifs
-    Input:
-        motif_i: np.ndarray
-        motif_j: np.ndarray
-    Output:
-        edit_distance: int
-    """
-    # m1 is the longer motif
-    if len(m1) < len(m2):
-        m1, m2 = m2, m1
-
-    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
-        seq = m1,
-        motif = m2,
-        band_width = len(m2),
-        align_to_end = True,
-        anchor_row = -1, # no anchor
-        compare_row = -1, # no compare
-    )
-                
-    state: int= np.argmax(score_array[len(m1) - 1, :]) # 0 -> M, 1 -> I, 2 -> D
-    best_j: int = band_argmax_j[len(m1) - 1, state]
-
-    # calculate edit distance from traceback
-    ops, _, _ = traceback_banded_roll_motif(
-        trace_M = trace_M,
-        trace_I = trace_I,
-        trace_D = trace_D,
-        best_i = len(m1),
-        best_j = best_j,
-        m = len(m2),
-        seq = m1,
-        motif = m2
-    )
-    # count edit operations: 'X' (mismatch), 'I' (insertion), 'D' (deletion)
-    edit_distance = sum(1 for op in ops if op in ['X', 'I', 'D'])
-    return edit_distance
-
 
 """
 #
@@ -1565,17 +1797,12 @@ def identify_region_across_windows(results: List[str], seq_win_size: int, seq_ov
         across_win_rgns.append(active_rgn)
     
     # write the linked regions to file
-    cot = 1
-    for rgn in across_win_rgns:
-        merged_filepath = f"{Path(results[0]).parent}/window_linked_{cot}.tsv"
-        with open(merged_filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f, delimiter='\t', lineterminator='\n')
-            writer.writerow(rgn)
-        cot += 1
-
-    new_filepath = [f"{Path(results[0]).parent}/window_linked_{cot}.tsv" for cot in range(1, cot)]
-    
-    return new_filepath + results
+    merged_filepath = f"{Path(results[0]).parent}/window_linked.tsv"
+    with open(merged_filepath, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f, delimiter='\t', lineterminator='\n')
+        writer.writerows(across_win_rgns)
+            
+    return [merged_filepath] + results
 
 def _is_overlapped(rgn1: RegionWithMotifAndSeq, rgn2: RegionWithMotifAndSeq) -> bool:
     """
@@ -1682,7 +1909,6 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
 
             # start alignment for each region
             for row in reader:
-                logger.debug(f"-------- annotating region {row[1]}:{row[2]}-{row[3]} --------")
                 rgn_dict = {
                     "win_id": row[0],
                     "chrom": row[1],
@@ -1710,30 +1936,26 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
                 candidates: List[Tuple[int, np.ndarray, np.ndarray, np.ndarray, int, int, str]] = [] # score, trace_M, trace_I, trace_D, end_i, end_j, motif
                 encoded_seq = encode_seq_to_array(rgn_dict["sequence"])
                 seq_len = len(encoded_seq)
-                MAX_DP_LENGTH: int = 10 ** 6
-
-                subregion: List[Tuple[int, int]] = []
-                MAX_MOTIF_LEN: int = max(len(motif) for motif in rgn_dict["motifs"])
-
-                for i in range(0, seq_len, MAX_DP_LENGTH - MAX_MOTIF_LEN):
-                    subregion.append((i, i + MAX_DP_LENGTH))
-
                 for motif in rgn_dict["motifs"]:
-                    logger.debug(f"refining motif {motif} for region {rgn_dict['chrom']}:{rgn_dict['start']}-{rgn_dict['end']}")
-                    subregion_pre: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-                    motif_len = len(motif)
                     encoded_motif = encode_seq_to_array(motif)
-                    #####
-                    ###print(f"start refine motif")
-                    ###print(f"encoded_motif: {decode_array_to_seq(encoded_motif)}")
-                    profile = np.zeros((len(encoded_motif), 5), dtype=np.int32)
-                    for i in range(0, seq_len, MAX_DP_LENGTH):
-                        profile += _banded_refine_motif(encoded_seq[i: i + MAX_DP_LENGTH], encoded_motif, MAX_PERIOD)
-                    ###print(f"profile: {profile}")
-                    ###print(f"encoded_refined_motif: {decode_array_to_seq(encoded_refined_motif)}")
-                    ###print(f"encoded_motif: {decode_array_to_seq(encoded_motif)}")
-                    #####
-
+                    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+                        seq = encoded_seq,
+                        motif = encoded_motif,
+                        band_width = MAX_PERIOD,
+                        align_to_end = True,
+                        anchor_row = -1, # no anchor
+                        compare_row = -1, # no compare
+                    )
+                    
+                    score = score_array[seq_len - 1, :].max()
+                    state = score_array[seq_len - 1, :].argmax()
+                    end_i = len(encoded_seq) # 1-based
+                    end_j = band_argmax_j[seq_len - 1, state]
+                    del score_array, band_argmax_j, state
+                    # get motif profile
+                    profile = traceback_motif_profile(trace_M, trace_I, trace_D, end_i, end_j, len(motif), encoded_seq)
+                    del trace_M, trace_I, trace_D
+                    # get refined motif and remove gaps
                     encoded_refined_motif = profile.argmax(axis=1)
                     encoded_refined_motif = encoded_refined_motif[encoded_refined_motif != 4]
 
@@ -1745,33 +1967,25 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
                     if len(encoded_refined_motif) == 0:
                         continue
 
-                    pre_M = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    pre_I = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    pre_D = np.zeros((MAX_DP_LENGTH + 1, motif_len), dtype=np.int32)
-                    for s, e in subregion:
-                        logger.debug(f"!!!! subregion {s}")
-                        subregion_pre.append((pre_M[-MAX_MOTIF_LEN:, :], 
-                                              pre_I[-MAX_MOTIF_LEN:, :], 
-                                              pre_D[-MAX_MOTIF_LEN:, :]
-                                            ))
-                        pre_M, pre_I, pre_D = banded_dp_align_forward(
-                            seq = encoded_seq[s: e],
-                            motif = encoded_refined_motif,
-                            band_width = MAX_PERIOD,
-                            overlap_length = MAX_MOTIF_LEN,
-                            pre_M = pre_M,
-                            pre_I = pre_I,
-                            pre_D = pre_D,
-                            is_start = (s == 0),
-                        )
-
-                    score = pre_M[-1, :].max()
-
+                    score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align(
+                        seq = encoded_seq,
+                        motif = encoded_refined_motif,
+                        band_width = MAX_PERIOD,
+                        align_to_end = True,
+                        anchor_row = -1, # no anchor
+                        compare_row = -1, # no compare
+                    )
+                    ###print(f"final alignment seq: {encoded_seq}, motif: {encoded_refined_motif}")
+                    score = int(score_array[seq_len - 1:, 0]) # TODO only match? or indel is also ok?
+                    end_i = seq_len # 1-based
+                    end_j = band_argmax_j[seq_len - 1:, 0]
+                    if score_array.size == 0:
+                        raise RuntimeError(f"Empty alignment score array for region {row}")
                     if score >= max_score * SECONDARY_SCORE_RATIO:
                         if score > max_score: # filter out secondary candidates with lower score
                             candidates = [candidate for candidate in candidates if candidate[0] >= score * SECONDARY_SCORE_RATIO]
                         ###print(f"score: {score}, motif: {decode_array_to_seq(encoded_refined_motif)}, end_i: {end_i}, end_j: {end_j}")
-                        candidates.append((score, encoded_refined_motif))
+                        candidates.append((score, trace_M, trace_I, trace_D, end_i, end_j, encoded_refined_motif))
                         max_score = max(max_score, score)
 
                 if len(candidates) == 0:
@@ -1783,10 +1997,10 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
 
                 # filter and sort candidates by score
                 candidates = [candidate for candidate in candidates if candidate[0] >= max_score * SECONDARY_SCORE_RATIO]
-                candidates.sort(key=lambda x: (-x[0], len(x[1])))
+                candidates.sort(key=lambda x: (-x[0], len(x[6])))
                 cur_score = 2 ** 31 - 1
                 for candidate in candidates:
-                    score, encoded_motif = candidate
+                    score, trace_M, trace_I, trace_D, end_i, end_j, encoded_motif = candidate
                     if score == cur_score:
                         continue
                     cur_score = score
@@ -1794,65 +2008,21 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
                     # The alignment may not start from the beginning of the motif or sequence
                     # start_i: starting position in seq (1-based DP index, 0 means start from beginning)
                     # start_j: starting position in motif (0-based index, 0 means start from beginning)
-                    ops_list: List[List[str]] = []
-                    start_i_list: List[int] = []
-                    start_j_list: List[int] = []
-
-                    n_sub = len(subregion)
-                    for idx in range(n_sub - 1, -1, -1):
-                        s, e = subregion[idx]
-                        pre_M, pre_I, pre_D = subregion_pre[idx]
-                        seg = encoded_seq[s:e]
-
-                        score_array, band_argmax_j, trace_M, trace_I, trace_D = banded_dp_align_backward(
-                            seq = seg,
-                            motif = encoded_motif,
-                            band_width = MAX_PERIOD,
-                            overlap_length = MAX_MOTIF_LEN,
-                            pre_M = pre_M,
-                            pre_I = pre_I,
-                            pre_D = pre_D,
-                            is_start = (s == 0),
-                        )
-
-                        seg_n = seg.shape[0]
-                        # Local row where backward walk starts (right end of path in this segment):
-                        # align overlap boundary with next window: g_join = subregion[idx+1][0] -> row s_next - s.
-                        if idx + 1 < n_sub:
-                            s_next = subregion[idx + 1][0]
-                            best_i_trace = min(seg_n, s_next - s)
-                        else:
-                            best_i_trace = seg_n
-                        if best_i_trace < 1:
-                            best_i_trace = 1
-                        # Overlap is assigned to the right-hand window only: left chunk ends at row
-                        # (s_next - s), right chunk traces full seg_n -> 0. No second cut (i_floor).
-
-                        best_state = int(score_array[best_i_trace - 1, :].argmax())
-                        end_j = int(band_argmax_j[best_i_trace - 1, best_state])
-
-                        ops, tb_start_i, tb_start_j = traceback_banded_roll_motif(
-                            trace_M = trace_M,
-                            trace_I = trace_I,
-                            trace_D = trace_D,
-                            best_i = best_i_trace,
-                            best_j = end_j,
-                            m = len(encoded_motif),
-                            seq = seg,
-                            motif = encoded_motif,
-                        )
-
-                        ops_list.append(ops)
-                        start_i_list.append(tb_start_i)
-                        start_j_list.append(tb_start_j)
-
-                    # Loop order was last subregion -> first; restore 5'->3' order for ops
-                    ops_merged: List[str] = []
-                    for subops in reversed(ops_list):
-                        ops_merged.extend(subops)
-
+                    ops: List[str]
+                    start_i: int
+                    start_j: int
+                    ops, start_i, start_j = traceback_banded_roll_motif(
+                        trace_M = trace_M,
+                        trace_I = trace_I,
+                        trace_D = trace_D,
+                        best_i = end_i,
+                        best_j = end_j,
+                        m = len(encoded_motif),
+                        seq = encoded_seq,
+                        motif = encoded_motif,
+                    )
+                
                     # Adjust motif based on starting position
-                    start_j = start_j_list[-1]
                     if start_j > 0:
                         # Rotate motif so that alignment starts from the beginning
                         adjusted_motif = np.concatenate((encoded_motif[start_j:], encoded_motif[:start_j]))
@@ -1864,7 +2034,7 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
                     rgn_dict["consensusSize"] = len(adjusted_motif)
                     rgn_dict["score"] = score
 
-                    cigar: str = ops_to_cigar(ops_merged, len(adjusted_motif))
+                    cigar: str = ops_to_cigar(ops, len(adjusted_motif))
                     rgn_dict["cigar"] = cigar if not SKIP_CIGAR else "."
                     rgn_dict["copyNumber"] = get_copy_number(cigar, rgn_dict["period"])
 
@@ -1873,7 +2043,7 @@ def annotate_regions(task: Tuple[str, str, str, int, float]) -> str:
 
                     # calculate nucleotide composition and entropy
                     if format in ["trf", "bed"]:
-                        rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops_merged, len(rgn_dict["sequence"]))
+                        rgn_dict["percentMatches"], rgn_dict["percentIndels"] = calculate_alignment_metrics(ops, len(rgn_dict["sequence"]))
                         nt_comp, entropy = calculate_nucleotide_composition(rgn_dict["sequence"])
                         rgn_dict["A"], rgn_dict["C"], rgn_dict["G"], rgn_dict["T"] = nt_comp["A"], nt_comp["C"], nt_comp["G"], nt_comp["T"]
                         rgn_dict["entropy"] = entropy
@@ -2113,429 +2283,6 @@ def banded_dp_align(
         trace_M, trace_I, trace_D,
     )
 
-@numba.njit(cache=True)
-def _banded_refine_motif(seq: np.ndarray, motif: np.ndarray, band_width: int):
-    """
-    Refine the motif using banded dynamic programming
-    Inputs:
-        seq: np.ndarray, sequence
-        motif: np.ndarray, motif
-        band_width: int, band width
-    Outputs:
-        profile: np.ndarray, motif profile
-    Notes:
-        The profile is a 2D array of shape (m, 5), where m is the length of the motif.
-        The first 4 columns are the counts of A/C/G/T in the motif, and the last column is the count of gaps.
-        The profile is used to refine the motif by removing gaps.
-    """
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10**9
-
-    # DP matrices
-    M = np.full((n, m), NEG_INF, np.int32)
-    I = np.full((n, m), NEG_INF, np.int32)
-    D = np.full((n, m), NEG_INF, np.int32)
-
-    # Traceback matrices
-    trace_state = np.zeros((n, m), np.int8)   # 0=M,1=I,2=D
-    trace_prev_j = np.zeros((n, m), np.int32) # previous j in band
-
-    # ---- initialize ----
-    for j in range(m):
-        M[0, j] = 0
-
-    # ---- run-length scaling (optional) ----
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i-1]:
-            run_len[i] = run_len[i-1] + 1
-        else:
-            run_len[i] = 1
-
-    alpha = 0.5
-    min_scale = 0.3
-
-    for i in range(1, n):
-        j_center = i % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-
-        si = seq[i]
-
-        # scale gap penalties
-        rl = run_len[i]
-        scale = 1.0 / (1.0 + alpha*(rl-1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-            prev_j = m - 1 if j == 0 else j - 1
-
-            # match/mismatch score
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            # ---- M state ----
-            best_prev = M[i-1, prev_j]
-            state = 0
-
-            if I[i-1, prev_j] > best_prev:
-                best_prev = I[i-1, prev_j]
-                state = 1
-            if D[i-1, prev_j] > best_prev:
-                best_prev = D[i-1, prev_j]
-                state = 2
-
-            M[i, j] = best_prev + s
-            trace_state[i, j] = state
-            trace_prev_j[i, j] = prev_j
-
-            # ---- I state ---- (gap in motif)
-            open_i = M[i-1, j] - gap_open_scaled
-            ext_i = I[i-1, j] - gap_extend_scaled
-            if open_i > ext_i:
-                I[i, j] = open_i
-                # prev j stays the same
-            else:
-                I[i, j] = ext_i
-
-            # ---- D state ---- (gap in seq)
-            open_d = M[i, prev_j] - gap_open_scaled
-            ext_d = D[i, prev_j] - gap_extend_scaled
-            if open_d > ext_d:
-                D[i, j] = open_d
-                # prev j stays prev_j
-            else:
-                D[i, j] = ext_d
-
-    # ---- find best score at last row ----
-    last_row = n-1
-    all_scores = np.empty(m*3, dtype=np.int32)
-    for j in range(m):
-        all_scores[j*3+0] = M[last_row, j]
-        all_scores[j*3+1] = I[last_row, j]
-        all_scores[j*3+2] = D[last_row, j]
-
-    best_idx = np.argmax(all_scores)
-    best_state = best_idx % 3
-    best_j = best_idx // 3
-
-    # ---- traceback to reconstruct motif profile ----
-    profile = np.zeros((m, 5), dtype=np.int32)
-    i = last_row
-    j = best_j
-    state = best_state
-
-    while i >= 0 and j >= 0:
-        if state == 0:
-            profile[j, seq[i]] += 1
-            prev_j = trace_prev_j[i, j]
-            state = trace_state[i, j]
-            i -= 1
-            j = prev_j
-        elif state == 1:
-            i -= 1
-            # stay same j, state change
-            state = 0  # or trace_state[i, j] if you want more precise
-        else: # D_STATE
-            profile[j, 4] += 1
-            prev_j = trace_prev_j[i, j]
-            state = 0  # or trace_state[i, j]
-            j = prev_j
-
-    return profile
-
-def banded_dp_align_forward(
-    seq: np.ndarray,
-    motif: np.ndarray,
-    band_width: int,
-    overlap_length: int,
-    pre_M: np.ndarray,
-    pre_I: np.ndarray,
-    pre_D: np.ndarray,
-    is_start: bool,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Forward banded dynamic programming alignment
-    Inputs:
-        seq: np.ndarray, sequence
-        motif: np.ndarray, motif
-        band_width: int, band width
-        pre_score_array: np.ndarray, previous score array
-        pre_band_argmax_j: np.ndarray, previous band argmax j
-    Outputs:
-        score_array: np.ndarray, score array
-        band_argmax_j: np.ndarray, band argmax j
-    """
-        # score_array[i, s] = max M/I/D in band at DP row i+1; s in {0,1,2} -> M,I,D.
-    # band_argmax_j[i, s] = motif column j (0-based) where that row-state max is attained
-    # (first j in band scan order on ties, same as strict > updates).
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10 ** 9
-
-    # ---- DP matrices ----
-    M = np.full((n + 1, m), NEG_INF, np.int32)
-    I = np.full((n + 1, m), NEG_INF, np.int32)
-    D = np.full((n + 1, m), NEG_INF, np.int32)
-
-    if not is_start:
-        M[:overlap_length, :] = pre_M
-        I[:overlap_length, :] = pre_I
-        D[:overlap_length, :] = pre_D
-
-    # ---- init ----
-    for j in range(m):
-        M[0, j] = 0
-
-    # ---- precompute run-length of seq ----
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i - 1]:
-            run_len[i] = run_len[i - 1] + 1
-        else:
-            run_len[i] = 1
-
-    # ---- parameters for scaling ----
-    alpha = 0.5   # control the decay strength (can be adjusted)
-    min_scale = 0.3  # lower bound, prevent gap too cheap
-
-    if is_start:
-        start = 1
-    else:
-        start = overlap_length
-    
-    for i in range(start, n + 1):
-
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end   = min(m, j_center + band_width + 1)
-
-        si = seq[i - 1]
-
-        # ---- current run-length ----
-        rl = run_len[i - 1]
-
-        # scale: 1 / (1 + alpha*(rl-1))
-        scale = 1.0 / (1.0 + alpha * (rl - 1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled   = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-
-            prev_j = m - 1 if j == 0 else j - 1
-
-            # ---- match/mismatch ----
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            # ---- M ----
-            best_prev = M[i - 1, prev_j]
-
-            v = I[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-
-            v = D[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-
-            M[i, j] = best_prev + s
-
-            # ---- I (gap in motif) ----
-            open_i = M[i - 1, j] - gap_open_scaled
-            ext_i  = I[i - 1, j] - gap_extend_scaled
-
-            if open_i > ext_i:
-                I[i, j] = open_i
-            else:
-                I[i, j] = ext_i
-
-            # ---- D (gap in seq) ----
-            open_d = M[i, prev_j] - gap_open_scaled
-            ext_d  = D[i, prev_j] - gap_extend_scaled
-
-            if open_d > ext_d:
-                D[i, j] = open_d
-            else:
-                D[i, j] = ext_d
-    
-    new_overlap_M = M[n + 1 - overlap_length : n + 1, :]
-    new_overlap_I = I[n + 1 - overlap_length : n + 1, :]
-    new_overlap_D = D[n + 1 - overlap_length : n + 1, :]
-
-    return (
-        new_overlap_M,
-        new_overlap_I,
-        new_overlap_D
-    )
-
-@numba.njit(cache=True)
-def banded_dp_align_backward(
-    seq: np.ndarray,
-    motif: np.ndarray,
-    band_width: int,
-    overlap_length: int,
-    pre_M: np.ndarray,
-    pre_I: np.ndarray,
-    pre_D: np.ndarray,
-    is_start: bool,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Banded DP on a segment; same transitions and outputs as banded_dp_align.
-    Optionally seeds the first overlap_length rows from forward pass (pre_*).
-    """
-    n = seq.shape[0]
-    m = motif.shape[0]
-    NEG_INF = -10 ** 9
-
-    score_array = np.full((n, 3), NEG_INF, np.int32)
-    band_argmax_j = np.full((n, 3), -1, np.int16)
-
-    M = np.full((n + 1, m), NEG_INF, np.int32)
-    I = np.full((n + 1, m), NEG_INF, np.int32)
-    D = np.full((n + 1, m), NEG_INF, np.int32)
-
-    trace_M = np.full((n + 1, m), -1, np.int8)
-    trace_I = np.full((n + 1, m), -1, np.int8)
-    trace_D = np.full((n + 1, m), -1, np.int8)
-
-    if not is_start:
-        for r in range(overlap_length):
-            for c in range(m):
-                M[r, c] = pre_M[r, c]
-                I[r, c] = pre_I[r, c]
-                D[r, c] = pre_D[r, c]
-
-    for j in range(m):
-        M[0, j] = 0
-
-    run_len = np.ones(n, dtype=np.int32)
-    for i in range(1, n):
-        if seq[i] == seq[i - 1]:
-            run_len[i] = run_len[i - 1] + 1
-        else:
-            run_len[i] = 1
-
-    alpha = 0.5
-    min_scale = 0.3
-
-    if is_start:
-        start = 1
-    else:
-        start = overlap_length
-    if start < 1:
-        start = 1
-
-    for i in range(start, n + 1):
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-
-        si = seq[i - 1]
-        cur_score_m = NEG_INF
-        cur_score_i = NEG_INF
-        cur_score_d = NEG_INF
-        cur_j_m = -1
-        cur_j_i = -1
-        cur_j_d = -1
-
-        rl = run_len[i - 1]
-        scale = 1.0 / (1.0 + alpha * (rl - 1))
-        if scale < min_scale:
-            scale = min_scale
-
-        gap_open_scaled = int(GAP_OPEN_PENALTY * scale)
-        gap_extend_scaled = int(GAP_EXTEND_PENALTY * scale)
-
-        for j in range(j_start, j_end):
-            prev_j = m - 1 if j == 0 else j - 1
-
-            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
-
-            best_prev = M[i - 1, prev_j]
-            state = 0
-            v = I[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-                state = 1
-            v = D[i - 1, prev_j]
-            if v > best_prev:
-                best_prev = v
-                state = 2
-
-            M[i, j] = best_prev + s
-            trace_M[i, j] = state
-
-            open_i = M[i - 1, j] - gap_open_scaled
-            ext_i = I[i - 1, j] - gap_extend_scaled
-            if open_i > ext_i:
-                I[i, j] = open_i
-                trace_I[i, j] = 0
-            else:
-                I[i, j] = ext_i
-                trace_I[i, j] = 1
-
-            open_d = M[i - 1, prev_j] - gap_open_scaled
-            ext_d = D[i - 1, prev_j] - gap_extend_scaled
-            if open_d > ext_d:
-                D[i, j] = open_d
-                trace_D[i, j] = 0
-            else:
-                D[i, j] = ext_d
-                trace_D[i, j] = 2
-
-            if M[i, j] > cur_score_m:
-                cur_score_m = M[i, j]
-                cur_j_m = j
-            if I[i, j] > cur_score_i:
-                cur_score_i = I[i, j]
-                cur_j_i = j
-            if D[i, j] > cur_score_d:
-                cur_score_d = D[i, j]
-                cur_j_d = j
-
-        score_array[i - 1, 0] = cur_score_m
-        band_argmax_j[i - 1, 0] = cur_j_m
-        score_array[i - 1, 1] = cur_score_i
-        band_argmax_j[i - 1, 1] = cur_j_i
-        score_array[i - 1, 2] = cur_score_d
-        band_argmax_j[i - 1, 2] = cur_j_d
-
-    for i in range(1, start):
-        j_center = (i - 1) % m
-        j_start = max(0, j_center - band_width)
-        j_end = min(m, j_center + band_width + 1)
-        cur_score_m = NEG_INF
-        cur_score_i = NEG_INF
-        cur_score_d = NEG_INF
-        cur_j_m = -1
-        cur_j_i = -1
-        cur_j_d = -1
-        for j in range(j_start, j_end):
-            if M[i, j] > cur_score_m:
-                cur_score_m = M[i, j]
-                cur_j_m = j
-            if I[i, j] > cur_score_i:
-                cur_score_i = I[i, j]
-                cur_j_i = j
-            if D[i, j] > cur_score_d:
-                cur_score_d = D[i, j]
-                cur_j_d = j
-        score_array[i - 1, 0] = cur_score_m
-        band_argmax_j[i - 1, 0] = cur_j_m
-        score_array[i - 1, 1] = cur_score_i
-        band_argmax_j[i - 1, 1] = cur_j_i
-        score_array[i - 1, 2] = cur_score_d
-        band_argmax_j[i - 1, 2] = cur_j_d
-
-    return score_array, band_argmax_j, trace_M, trace_I, trace_D
-
 def traceback_banded_roll_motif(
     trace_M: np.ndarray, trace_I: np.ndarray, trace_D: np.ndarray,
     best_i: int, best_j: int,
@@ -2592,6 +2339,199 @@ def traceback_banded_roll_motif(
     start_j = (j + 1) % m if m > 0 else 0
 
     return ops, start_i, start_j
+
+@numba.njit
+def hirschberg_forward_dp(seq: np.ndarray, motif: np.ndarray):
+    """
+    Compute forward DP (rolling array) with affine gap.
+
+    Returns:
+        M_prev, I_prev, D_prev (last row scores)
+    """
+    NEG_INF = -10 ** 9
+
+    n = seq.shape[0]
+    m = motif.shape[0]
+
+    M_prev = np.full(m, NEG_INF, np.int32)
+    I_prev = np.full(m, NEG_INF, np.int32)
+    D_prev = np.full(m, NEG_INF, np.int32)
+
+    # initialization: free start on motif
+    for j in range(m):
+        M_prev[j] = 0
+
+    for i in range(1, n + 1):
+        M_curr = np.full(m, NEG_INF, np.int32)
+        I_curr = np.full(m, NEG_INF, np.int32)
+        D_curr = np.full(m, NEG_INF, np.int32)
+
+        si = seq[i - 1]
+
+        for j in range(m):
+            prev_j = j - 1 if j > 0 else -1
+
+            s = MATCH_SCORE if si == motif[j] else -MISMATCH_PENALTY
+
+            # ---- M ----
+            if prev_j >= 0:
+                best = M_prev[prev_j]
+                if I_prev[prev_j] > best:
+                    best = I_prev[prev_j]
+                if D_prev[prev_j] > best:
+                    best = D_prev[prev_j]
+                M_curr[j] = best + s
+
+            # ---- I ----
+            open_i = M_prev[j] - GAP_OPEN_PENALTY
+            ext_i = I_prev[j] - GAP_EXTEND_PENALTY
+            I_curr[j] = open_i if open_i > ext_i else ext_i
+
+            # ---- D ----
+            if prev_j >= 0:
+                open_d = M_curr[prev_j] - GAP_OPEN_PENALTY
+                ext_d = D_curr[prev_j] - GAP_EXTEND_PENALTY
+                D_curr[j] = open_d if open_d > ext_d else ext_d
+
+        M_prev, M_curr = M_curr, M_prev
+        I_prev, I_curr = I_curr, I_prev
+        D_prev, D_curr = D_curr, D_prev
+
+    return M_prev, I_prev, D_prev
+
+def motif_profile_from_ops(
+    ops: List[str],
+    seq: np.ndarray,
+    m: int,
+) -> Optional[np.ndarray]:
+    """
+    Reconstruct motif profile from a forward op list by trying each start phase j0 in 0..m-1.
+    Semantics follow ``traceback_motif_profile``: M/X update profile[j, base], I updates [j,4], D advances j.
+    """
+    n = len(seq)
+    if m == 0:
+        return np.zeros((0, 5), dtype=np.int32)
+    for j0 in range(m):
+        j = j0
+        i = 0
+        profile = np.zeros((m, 5), dtype=np.int32)
+        ok = True
+        for op in ops:
+            if op == "/" or op == "":
+                continue
+            if op in ("=", "X"):
+                if i >= n:
+                    ok = False
+                    break
+                profile[j, int(seq[i])] += 1
+                i += 1
+                j = (j + 1) % m
+            elif op == "I":
+                if i >= n:
+                    ok = False
+                    break
+                profile[j, 4] += 1
+                i += 1
+            elif op == "D":
+                j = (j + 1) % m
+            else:
+                ok = False
+                break
+        if ok and i == n:
+            return profile
+    return None
+
+def refined_motif_from_profile(profile: np.ndarray) -> np.ndarray:
+    """
+    Match ``annotate_regions``: argmax per row, then drop gap code 4.
+    """
+    if profile.size == 0:
+        return np.array([], dtype=np.int8)
+    row_argmax = profile.argmax(axis=1).astype(np.int8)
+    return row_argmax[row_argmax != 4]
+
+def _hirschberg_ops(seq: np.ndarray, motif: np.ndarray) -> List[str]:
+    """
+    Hirschberg divide-and-conquer; returns only the op list (recursive core).
+    """
+    NEG_INF = -10**9
+
+    def _base_case(s_one: np.ndarray, mot: np.ndarray) -> List[str]:
+        si = int(s_one[0])
+        mloc = int(mot.shape[0])
+
+        best_score = NEG_INF
+        best_j = 0
+
+        for jj in range(mloc):
+            match_score = MATCH_SCORE if si == mot[jj] else -MISMATCH_PENALTY
+            score = match_score - (mloc - 1) * GAP_OPEN_PENALTY
+            if score > best_score:
+                best_score = score
+                best_j = jj
+
+        ops_loc: List[str] = []
+        for _ in range(best_j):
+            ops_loc.append("D")
+        ops_loc.append("=" if si == mot[best_j] else "X")
+        for _ in range(best_j + 1, mloc):
+            ops_loc.append("D")
+        return ops_loc
+
+    if len(seq) == 0:
+        return ["D"] * int(motif.shape[0])
+
+    if len(motif) == 0:
+        return ["I"] * len(seq)
+
+    if len(seq) == 1:
+        return _base_case(seq, motif)
+
+    mid = len(seq) // 2
+
+    F_M, F_I, F_D = hirschberg_forward_dp(seq[:mid], motif)
+    B_M, B_I, B_D = hirschberg_forward_dp(seq[mid:][::-1], motif[::-1])
+
+    B_M = B_M[::-1]
+    B_I = B_I[::-1]
+    B_D = B_D[::-1]
+
+    best_score = NEG_INF
+    best_j = 0
+
+    for j in range(int(motif.shape[0])):
+        score = max(
+            F_M[j] + B_M[j],
+            F_I[j] + B_I[j],
+            F_D[j] + B_D[j],
+        )
+        if score > best_score:
+            best_score = score
+            best_j = j
+
+    left = _hirschberg_ops(seq[:mid], motif[:best_j])
+    right = _hirschberg_ops(seq[mid:], motif[best_j:])
+    return left + right
+
+def hirschberg(seq: np.ndarray, motif: np.ndarray) -> Tuple[List[str], np.ndarray, np.ndarray]:
+    """
+    Hirschberg alignment with affine gap; also builds motif profile and refined motif from ops.
+    Inputs:
+        seq: np.ndarray, sequence
+        motif: np.ndarray, motif
+    Outputs:
+        ops: List[str], List of atomic operations: '=', 'X', 'I', 'D', '/'
+        profile: np.ndarray, Shape (m, 5) int32; same counting as ``traceback_motif_profile``
+        refined: np.ndarray, Encoded motif columns after profile argmax, gap symbol 4 removed (like ``annotate_regions``)
+    """
+    ops = _hirschberg_ops(seq, motif)
+    m = int(motif.shape[0])
+    profile = motif_profile_from_ops(ops, seq, m)
+    if profile is None:
+        profile = np.zeros((m, 5), dtype=np.int32)
+    refined = refined_motif_from_profile(profile)
+    return ops, profile, refined
+
 
 """
 #
@@ -2720,14 +2660,18 @@ def run_scan(cfg: dict[str, Any]) -> None:
         None
     
     Generates the following files:
+        None, generates the following files:
         - <prefix>.log # log file
         - <prefix>.tsv # annotation results
         - <prefix>.web_summary.html # web summary of annotation
-        - <JOB_DIR>/windows/ # split windows (temp)
-        - <JOB_DIR>/stats/ # smoothness score distribution (temp)
-        - <JOB_DIR>/raw_rgns/ # raw regions (temp)
-        - <JOB_DIR>/polished_rgns/ # polished regions (temp)
-        - <JOB_DIR>/annotated_rgns/ # annotated regions (temp)
+        - <JOB_DIR>/windows/ # split windows
+        - <JOB_DIR>/stats/ # smoothness score distribution
+        - <JOB_DIR>/raw_rgns/ # raw regions
+        - <JOB_DIR>/polished_rgns/ # polished regions
+        - <JOB_DIR>/annotated_rgns/ # annotated regions
+        - <JOB_DIR>/final_results.tsv # final results
+        - <JOB_DIR>/log.log # log file
+        - <JOB_DIR>/web_summary.html # web summary
     """    
     global JOB_DIR
     JOB_DIR = cfg["job_dir"]
@@ -2743,6 +2687,12 @@ def run_scan(cfg: dict[str, Any]) -> None:
     SECONDARY_SCORE_RATIO = cfg["secondary"]
     global SKIP_CIGAR
     SKIP_CIGAR = cfg["skip_cigar"]
+    global ENCODE_TABLE
+    ENCODE_TABLE = np.full(256, -1, dtype=np.int8)
+    ENCODE_TABLE[ord('A')] = 0
+    ENCODE_TABLE[ord('C')] = 1
+    ENCODE_TABLE[ord('G')] = 2
+    ENCODE_TABLE[ord('T')] = 3
     global OPS_TABLE
     OPS_TABLE = np.full(256, -1, dtype=np.int8)
     OPS_TABLE[ord("=")] = 0

@@ -1,13 +1,23 @@
-from typing import List, Tuple, Dict, Any, Literal
-import numpy as np
-import polars as pl
-from plotly.colors import sample_colorscale, get_colorscale
-import plotly.graph_objects as go
-import plotly.subplots as sp
-import logging
+from __future__ import annotations
+from typing import TYPE_CHECKING
+from typing import List, Tuple, Dict, Any, Literal, Optional
 
+if TYPE_CHECKING:
+    import anndata as ad
+    import numpy as np
+    import polars as pl
+    import plotly.graph_objects as go
+    import plotly.subplots as sp
+
+import logging
 logger = logging.getLogger(__name__)
 
+
+"""
+#
+# trackplot function
+#
+"""
 def trackplot(
     tracks: List,
     region: str,
@@ -80,6 +90,11 @@ def trackplot(
     ... ]
     >>> fig = trackplot(tracks, "chr1:1000-5000", figsize=(1000, 300))
     """
+    import numpy as np
+    import polars as pl
+    import plotly.graph_objects as go
+    import plotly.subplots as sp
+
     VERTICAL_SPACING: float = vertical_spacing
     # get coordinates
     region = region.split(":")
@@ -813,6 +828,7 @@ def _make_solid_arrow(
         Arrow body relative width.
     arrowhead_length : float
         Arrow length.
+    
     Returns
     -------
     np.ndarray
@@ -941,23 +957,230 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
 
     return colorscale
 
+"""
+#
+# waterfall function
+#
+"""
 def waterfall(
-    df: pl.DataFrame,
-    show_by: Literal["motif", "kmer"] = "motif",
-    k: int = 5,
-    color: str = "gray",
-    colormap: dict = None,
+    adata: ad.AnnData,
+    feature: Literal["motif", "kmer"] = "motif",
+    sample_order: Option[List[str]] = None,
+    ksize: Option[int] = None,
+    color: str = "id",
+    palette: dict | List | None = None,
 ) -> go.Figure:
     """
-    Plot the waterfall plot
-    Input:
-        df: pl.DataFrame
-        show_by: Literal["motif", "kmer"]
-        k: int
-        color: str
-        colormap: dict
-    Output:
-        fig: go.Figure
+    Create a waterfall plot for motif or k-mer composition across samples.
+
+    The waterfall plot visualizes motif variation across samples in a
+    stacked or ordered layout, where each sample is represented along the
+    y-axis.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        Annotated data object generated from `pp.read_anno()`.
+
+    feature : {"motif", "kmer"}, default="motif"
+        Type of feature to visualize.
+
+        - "motif": uses precomputed motif units from decomposition
+        - "kmer": uses k-mer features
+
+    sample_order : list of str, optional
+        Ordered list of sample identifiers defining the x-axis order.
+        If None, samples are ordered based on the default order in `adata.obs`.
+
+    ksize : int, optional
+        k-mer size used when `feature="kmer"`.
+        If None, the k-mer size is inferred from the most frequent motif length.
+
+    color : str, default="id"
+        Column name in `adata.var` used to assign motif coloring.
+
+    palette : dict | list | None, optional
+        Color mapping for features.
+
+        - dict: explicit mapping {feature -> color}
+        - list: sequential color assignment following input order
+        - None: default internal colormap will be used
+
+    Returns
+    -------
+    fig : go.Figure
+        Plotly figure object representing the waterfall visualization.
+
+    Examples
+    --------
+    >>> fig = vp.pl.waterfall(adata)
+
+    >>> fig = vp.pl.waterfall(
+    ...     adata,
+    ...     feature="kmer",
+    ...     ksize=5
+    ... )
+    """
+    import polars as pl
+    import anndata as ad
+    import plotly.graph_objects as go
+    
+    track_list: List[Dict] = []
+    max_x: int = 0
+
+    # check sample_order
+    if sample_order is None:
+        sample_order: List[str] = list(adata.obs.index)
+    all_sample_list: List[str] = list(adata.obs.index)
+    missing = set(all_sample_list) - set(sample_order)
+    if missing:
+        raise KeyError(f"Missing motifs in sample_order: {missing}") # TODO
+
+    """COLORS = {
+        "warm": [
+            "FEE8C8", "FDD49E", "FDBB84", "FFEDA0", "FED976", "FEB24C", "FC8D59"
+        ],
+        "green": [
+            "C7E9C0", "A1D99B", "B8E186", "7FBC41", "74C476",
+            "41AB5D", "238B45", "006D2C", "276419", "4D9221"
+        ],
+        "blue": [
+            "80CDC1", "35978F", "01665E", "6BAED6", "4292C6", "2171B5"
+        ],
+        "purple": [
+            "88419D", "810F7C", "F768A1", "DD3497", "AE017E", "7A0177"
+        ],
+        "red": [
+            "FCBBA1", "FC9272", "FB6A4A", "EF3B2C", "CB181D"
+        ],
+        "grey": [
+            "grey"
+        ]
+    }"""
+
+    # check color
+    match feature:
+        case "motif":
+            all_id_list: List[str] = list(adata.var.index)
+            if color == "id":
+                id2element: Dict[str, Any] = {m: m for m in all_id_list}
+            else:
+                if color not in adata.var.columns:
+                    raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
+                id2element: Dict[str, Any] = Dict(zip(adata.var.index, adata.var[color]))
+            all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
+
+        case "kmer":
+            # get ksize
+            if ksize is None:
+                ksize: int = len(adata.var["motif"][0])
+            # get k-mers
+            key: str = f"kmer_array_k={ksize}"
+            if key not in adata.uns:
+                _calculate_kmer_array(adata, ksize) # TODO
+            kmer_array_dict: Dict[str, List[str]] = adata.uns[f"kmer_array_k={ksize}"]
+            all_element_list: List[Any] = list(dict.fromkeys(kmer for arr in kmer_array_dict.values() for kmer in arr))
+
+        case _:
+            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif' or 'kmer'")
+
+    # assign color
+    element_num: int = len(all_element_list)
+    DEFAULT_COLORMAP: List[str] = [
+        "#FEE8C8", "#FDD49E", "#FDBB84", "#FC8D59", "#FFEDA0", "#FED976", "#FEB24C",
+        "#C7E9C0", "#A1D99B", "#74C476", "#41AB5D", "#238B45", "#006D2C", "#276419",
+        "#4D9221", "#7FBC41", "#B8E186", "#80CDC1", "#35978F", "#01665E", "#6BAED6",
+        "#4292C6", "#2171B5", "#FCBBA1", "#FC9272", "#FB6A4A", "#EF3B2C", "#CB181D",
+        "#88419D", "#810F7C", "#F768A1", "#DD3497", "#AE017E", "#7A0177"
+    ]
+    match palette:
+        case None:
+            if element_num > len(DEFAULT_COLORMAP):
+                logger.warning(f"Number of {color} is larger then number of colors in default colormap, using grey to represent remaining motifs")
+                DEFAULT_COLORMAP += ["grey"] * (element_num - len(DEFAULT_COLORMAP))
+            colormap = dict(zip(all_element_list, DEFAULT_COLORMAP[:element_num]))
+
+        case list():
+            if not all(isinstance(x, str) for x in palette):
+                raise TypeError("List palette must be List[str]")
+            
+            if element_num > len(palette):
+                logger.warning(f"Number of {color} is larger then number of colors in given colormap, using grey to represent remaining motifs")
+                palette += ["grey"] * (element_num - len(palette))
+            colormap = dict(zip(all_element_list, palette[:element_num]))
+
+        case dict():
+            if not all(isinstance(k, str) and isinstance(v, str) for k, v in palette.items()):
+                raise TypeError("Dict palette must be Dict[str, str]")
+
+            missing = set(all_element_list) - set(palette.keys())
+            if missing:
+                raise KeyError(f"Missing {color} in palette: {missing}")
+            
+            colormap = palette
+
+    match feature:
+        case "motif":
+            motif_array_dict: Dict[str, List[str]] = adata.uns["motif_array"]
+            orientation_array_dict: Dict[str, List[str]] = adata.uns["orientation_array"]
+            for sample in sample_order:
+                motif_array: List[str] = motif_array_dict[sample]
+                orientation_array: List[str] = orientation_array_dict[sample]
+                color_array: List[str] = [colormap[m] for m in motif_array]
+                array_len: int = len(motif_array)
+                max_x: int = max(max_x, array_len)
+                track_data: pl.DataFrame({
+                    "chrom": ["seq"] * array_len,
+                    "start": list(range(array_len)),
+                    "end": list(range(array_len) + 1),
+                    "motif": motif_array,
+                    "strand": orientation_array,
+                    "color": color_array,
+                })
+                track_dict = {
+                    "name": sample,
+                    "type": "bed",
+                    "data": track_data,
+                }
+                track_list.append(track_dict)
+
+        case "kmer":
+            kmer_array_dict: Dict[str, List[str]] = adata.uns[f"kmer_array_k={ksize}"]
+            for sample in sample_order:
+                kmer_array: List[str] = kmer_array_dict[sample]
+                orientation_array: List[str] = ["+"] * len(kmer_array)
+                color_array: List[str] = [colormap[m] for m in kmer_array]
+                array_len: int = len(kmer_array)
+                max_x: int = max(max_x, array_len)
+                track_data: pl.DataFrame({
+                    "chrom": ["seq"] * array_len,
+                    "start": list(range(array_len)),
+                    "end": list(range(array_len) + 1),
+                    "kmer": kmer_array,
+                    "strand": orientation_array,
+                    "color": color_array,
+                })
+                track_dict = {
+                    "name": sample,
+                    "type": "bed",
+                    "data": track_data,
+                }
+                track_list.append(track_dict)
+
+        case _:
+            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif' or 'kmer'")
+
+    fig: go.Figure = trackplot(
+        tracks = track_list,
+        region = f"seq:0-{max_x}",
+        title = "",
+        figsize = (800, 400),
+        vertical_spacing = 0.02
+    )
+    return fig
+
+    ################
+
     """
     # give seq index (y-axis)
     seq_df = (
@@ -1029,3 +1252,309 @@ def waterfall(
     )
 
     return fig
+    """
+
+"""
+#
+# DNA logo function
+#
+"""
+def logo(
+    adata: ad.AnnData, 
+    reference_motif: Optional[str] = None,
+    yaxis: Literal["count", "probability", "information"] = "information",
+    color: dict = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728"},
+    title: str = ""
+) -> go.Figure:
+    """
+    Plot the logo plot
+    
+    Parameters
+    ----------
+    adata: ad.AnnData
+        The AnnData object.
+
+    reference_motif: Optional[str]
+        The reference motif used as alignment reference. Default is None (use the most frequent motif).
+    
+    yaxis: Literal["count", "probability", "information"]
+        The y-axis to use. Default is "information".
+    
+    color: dict
+        The colors of the bases. Default is `{"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728"}`.
+    
+    title: str
+        The title of the plot. Default is empty.
+    
+    Returns
+    -------
+    go.Figure
+        The logo figure.
+    """
+    import re
+    import parasail
+    import numpy as np
+    import anndata as ad
+
+    # config
+    LETTERS: List[str] = ["A", "C", "G", "T", "-"]
+    LETTER_PATHS: Dict[str, str] = _get_letter_paths(letters = LETTERS)
+    LETTER_TO_IDX: Dict[str, int] = {
+        "A": 0,
+        "C": 1,
+        "G": 2,
+        "T": 3,
+        "-": 4,
+    }
+    LETTER_WIDTH: float = 0.8 # width per position, 0-1
+
+    # get reference motif
+    if reference_motif is None:
+        if len(adata.var) == 0:
+            raise ValueError("adata.var is empty")
+        reference_motif = (
+            adata.var
+            .sort_values("copy_number", ascending=False)
+            ["motif"]
+            .iloc[0]
+        )
+    
+    # align motifs
+    count: np.ndarray = np.zeros((len(reference_motif), len(LETTERS)))
+    MATRIX = parasail.matrix_create("ACGT", 2, -1)
+    for _, row in adata.var.iterrows():
+        motif = row["motif"]
+        cn = row["copy_number"]
+
+        result = parasail.nw_trace_striped_16(
+            reference_motif,
+            motif,
+            5,
+            1,
+            MATRIX
+        )
+
+        ref_aln = result.traceback.ref
+        seq_aln = result.traceback.query
+        ref_pos = 0
+
+        for r, s in zip(ref_aln, seq_aln):
+            if r != "-":
+                if s in LETTER_TO_IDX:
+                    count[ref_pos, LETTER_TO_IDX[s]] += cn
+                ref_pos += 1
+
+        assert ref_pos == len(reference_motif) # check if the alignment is correct
+
+    match yaxis:
+        case "count":
+            pwm = count
+        case "probability":
+            pwm = count / count.sum(axis = 0)   
+        case "information":
+            pwm = count / count.sum(axis = 0)
+            pwm = _compute_information_content(pwm)
+        case _:
+            raise ValueError(f"Invalid y-axis: {yaxis}")
+
+    # plot
+    fig: go.Figure = go.Figure()
+    for pos, row in enumerate(pwm):
+        order: List[int] = np.argsort(row)  # from small to large
+        y_offset: float = 0
+
+        for idx in order:
+            letter: str = LETTERS[idx]
+            height: float = row[idx]
+            # skip if height is too small
+            if height <= 1e-6:  
+                continue
+            raw_path: str = LETTER_PATHS[letter]
+
+            # normalize path because matplotlib font coordinates are not 0-1, need to standardize
+            coords = [float(x) for x in re.findall(r"[-+]?\d*\.\d+|\d+", raw_path)]
+            xs = coords[::2]
+            ys = coords[1::2]
+
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+
+            norm_sx = 1.0 / (max_x - min_x)
+            norm_sy = 1.0 / (max_y - min_y)
+
+            normalized_path = _transform_path(
+                raw_path,
+                sx = norm_sx,
+                sy = norm_sy,
+                tx = - min_x * norm_sx,
+                ty = - min_y * norm_sy
+            )
+
+            # apply final transformation
+            final_path = _transform_path(
+                normalized_path,
+                sx = LETTER_WIDTH, # width per position
+                sy = height, # height
+                tx = pos,
+                ty = y_offset
+            )
+
+            fig.add_shape(
+                type = "path",
+                path = final_path,
+                fillcolor = color[letter],
+                line = dict(width=0)
+            )
+
+            # hover support (invisible bar)
+            fig.add_trace(go.Bar(
+                x = [pos + LETTER_WIDTH / 2],
+                y=[height],
+                base = y_offset,
+                width = LETTER_WIDTH, # width
+                marker=dict(color=color, opacity = 0, line=dict(width=0)),
+                hovertemplate = f"{letter}<br>{yaxis}={height:.3f}<extra></extra>",
+                showlegend = False
+            ))
+
+            y_offset += height
+
+    fig.update_layout(
+        xaxis = dict(
+            range=[0, len(pwm)],
+            title="Position"
+        ),
+        yaxis = dict(
+            title=yaxis
+        ),
+        title = title,
+        template="simple_white",
+        height = 600 # TODO how to decide 
+    )
+    
+    if yaxis in ["probability", "information"]:
+        fig.update_yaxes(range=[0, 1])
+
+    return fig
+
+def _get_letter_paths(
+    letters: List[str] = ["A", "C", "G", "T", "-"],
+    fontsize: int = 1, 
+    fontfamily: str = "DejaVu Sans", 
+    weight: str = "bold"
+) -> Dict[str, str]:
+    """
+    Get the letter paths
+
+    Parameters
+    ----------
+    letters: List[str]
+        List of letters. Default is ["A", "C", "G", "T"].
+    fontsize: int
+        Font size. Default is 1.
+    fontfamily: str
+        Font family. Default is "DejaVu Sans".
+    weight: str
+        Font weight. Default is "bold".
+
+    Returns
+    -------
+    Dict[str, str]
+        Dictionary of letter paths.
+    """
+    from matplotlib.textpath import TextPath
+    from matplotlib.font_manager import FontProperties
+    fp = FontProperties(family=fontfamily, weight=weight)
+    paths = {}
+
+    for letter in letters:
+        tp = TextPath((0, 0), letter, size=fontsize, prop=fp)
+        verts = tp.vertices
+        codes = tp.codes
+
+        path_str = []
+        for (x, y), code in zip(verts, codes):
+            if code == 1:  # MOVETO
+                path_str.append(f"M {x} {y}")
+            elif code == 2:  # LINETO
+                path_str.append(f"L {x} {y}")
+            elif code == 79:  # CLOSEPOLY
+                path_str.append("Z")
+
+        paths[letter] = " ".join(path_str)
+
+    return paths
+
+def _transform_path(
+    path: str, 
+    sx: float, 
+    sy: float, 
+    tx: float, 
+    ty: float
+) -> str:
+    """
+    Transform the path
+
+    Parameters
+    ----------
+    path: str
+        The path to transform.
+    sx: float
+        The scale factor for the x-axis.
+    sy: float
+        The scale factor for the y-axis.
+    tx: float
+        The translation factor for the x-axis.
+    ty: float
+        The translation factor for the y-axis.
+
+    Returns
+    -------
+    str
+        The transformed path.
+    """
+    import re
+
+    tokens = re.split(r'([MLZ])', path)
+    result = []
+
+    for token in tokens:
+        if token in ["M", "L", "Z"]:
+            result.append(token)
+        elif token.strip():
+            coords = token.strip().split()
+            new_coords = []
+            for i in range(0, len(coords), 2):
+                x = float(coords[i])
+                y = float(coords[i + 1])
+                x_new = x * sx + tx
+                y_new = y * sy + ty
+                new_coords.append(f"{x_new},{y_new}")
+            result.append(" ".join(new_coords))
+
+    return " ".join(result)
+
+def _compute_information_content(
+    pwm: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute the information content
+
+    Parameters
+    ----------
+    pwm: np.ndarray
+        The PWM matrix.
+
+    Returns
+    -------
+    np.ndarray
+        pwm: np.ndarray
+        The PWM matrix.
+    """
+
+    ic = []
+    for row in pwm:
+        H = -np.sum([p * np.log2(p) if p > 0 else 0 for p in row])
+        R = 2 - H
+        ic.append(row * R)
+    return np.array(ic)
