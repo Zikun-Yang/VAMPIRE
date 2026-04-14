@@ -46,7 +46,7 @@ $ docker exec vampire-tr vampire --help
 
 ## Requirements
 
-VAMPIRE requires Python 3.10+ to run. Some softwares are required for specific functions, 
+VAMPIRE requires Python 3.10+ to run. Core Python dependencies (including `polars`, `numpy`, `plotly`, `anndata`, `biopython`, `numba`, `pysam`, etc.) are installed automatically when you install the package via `pip`. Some external software is required for specific functions; for example, `mafft` is needed for the sequence-logo plotting feature.
 
 ## Verification
 

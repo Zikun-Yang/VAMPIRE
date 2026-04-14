@@ -14,5 +14,6 @@
    :toctree: ../generated/
 
    pl.trackplot
+   pl.set_default_plotstyle
 
 ```

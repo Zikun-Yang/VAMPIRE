@@ -46,10 +46,8 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
-    "sphinx_autodoc_typehints",
-    "myst_parser",
-    "sphinx_design",
     "sphinx_autodoc_typehints",  # needs to be after napoleon
+    "myst_parser",
     "sphinx_design",
 ]
 

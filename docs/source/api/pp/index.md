@@ -18,5 +18,6 @@
    pp.read_bed
    pp.read_bedgraph
    pp.read_indexed_bed
+   pp.read_anno
 
 ```
