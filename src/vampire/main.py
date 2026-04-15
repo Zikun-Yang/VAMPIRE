@@ -161,18 +161,6 @@ def main():
     parser_generator.add_argument('--debug', action='store_true', help='Output debug info [False]')
 
     # ------------------------------------------------------------
-    # mkref
-    # ------------------------------------------------------------
-    parser_mkref = subparsers.add_parser('mkref', 
-                                         description='VAMPIRE mkref\n'
-                                            'Usage: vampire mkref [options] [prefix] [output_prefix]\n'
-                                            'For example: vampire mkref [prefix] [output_prefix]\n',
-                                         formatter_class=argparse.RawTextHelpFormatter,
-                                         help='Make the reference database from annotation result')
-    parser_mkref.add_argument('prefix', type=str, help='annotation result prefix')
-    parser_mkref.add_argument('output', type=str, help='output')
-
-    # ------------------------------------------------------------
     # evaluate
     # ------------------------------------------------------------
     parser_evaluate = subparsers.add_parser('evaluate', 
@@ -202,20 +190,6 @@ def main():
     parser_refine.add_argument("-t", "--thread", "--threads", dest="threads", type=int, default=8, help="number of thread [8]")
 
     # ------------------------------------------------------------
-    # logo
-    # ------------------------------------------------------------
-    parser_logo = subparsers.add_parser('logo', 
-                                        description='VAMPIRE logo\n'
-                                            'Usage: vampire logo [options] [input prefix] [outputprefix]\n'
-                                            'For example: vampire logo [input prefix] [output_prefix]\n',
-                                        formatter_class=argparse.RawTextHelpFormatter,
-                                        help='Generate the logo of the tandem repeats.')
-    parser_logo.add_argument("prefix", type=str,  help="prefix\nfor motif file, plot seq Logo of reference motifs\nfor annotation file, plot seq Logo of actual motif")
-    parser_logo.add_argument("output", type=str,  help="pdf/png name")
-    parser_logo.add_argument("-t", "--type", type=str, default='motif', help="motif / annotation")
-    parser_logo.add_argument("-f", "--format", type=str, default='pdf', help="pdf/png")
-
-    # ------------------------------------------------------------
     # identity
     # ------------------------------------------------------------
     parser_identity = subparsers.add_parser('identity', 
@@ -231,14 +205,6 @@ def main():
     parser_identity.add_argument("--mode", type=str, default='raw', help="mode: raw or invert")
     parser_identity.add_argument("--max-indel", type=int, default=0, help="maximum indel length")
     parser_identity.add_argument("--min-indel", type=int, default=0, help="minimum indel length")
-
-    # ------------------------------------------------------------
-    # plotheatmap
-    # ------------------------------------------------------------
-    '''parser_plotheatmap = subparsers.add_parser('plotheatmap', help='Plot the heatmap of the tandem repeats.')
-    parser_plotheatmap.add_argument('--input', required=True, help='Input directory')
-    parser_plotheatmap.add_argument('--output', required=True, help='Output file')
-    parser_plotheatmap.set_defaults(func=run_plotheatmap)'''
 
     # get arguments
     args = parser.parse_args()

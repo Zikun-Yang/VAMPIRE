@@ -1086,6 +1086,7 @@ def waterfall(
 
     # assign color
     element_num: int = len(all_element_list)
+    """
     DEFAULT_COLORMAP: List[str] = [
         "#FEE8C8", "#FDD49E", "#FDBB84", "#FC8D59", "#FFEDA0", "#FED976", "#FEB24C",
         "#C7E9C0", "#A1D99B", "#74C476", "#41AB5D", "#238B45", "#006D2C", "#276419",
@@ -1093,6 +1094,14 @@ def waterfall(
         "#4292C6", "#2171B5", "#FCBBA1", "#FC9272", "#FB6A4A", "#EF3B2C", "#CB181D",
         "#88419D", "#810F7C", "#F768A1", "#DD3497", "#AE017E", "#7A0177"
     ]
+    """
+
+    DEFAULT_COLORMAP: List[str] = [
+        "#fffcf5", "#fee3d6", "#f8a9a3", "#efa1cf", "#ec57e5", "#a4cae4", "#7bd1ca", "#bfde9f", "#58d581", 
+        "#FED976", "#FC8D59", "#EF3B2C", "#DD3497", "#af14a8", "#4292C6", "#35978F", "#7FBC41", "#238B45", 
+        "#f3b102", "#d24504", "#91150b", "#7d1552", "#3d073a", "#204c69", "#143936", "#3f5d20", "#092512"
+    ]
+
     match palette:
         case None:
             if element_num > len(DEFAULT_COLORMAP):
@@ -1129,10 +1138,10 @@ def waterfall(
                 color_array: List[str] = [colormap[m] for m in motif_array]
                 array_len: int = len(motif_array)
                 max_x: int = max(max_x, array_len)
-                track_data: pl.DataFrame({
+                track_data: pl.DataFrame = pl.DataFrame({
                     "chrom": ["seq"] * array_len,
-                    "start": list(range(array_len)),
-                    "end": list(range(array_len) + 1),
+                    "start": [i for i in range(array_len)],
+                    "end": [i + 1 for i in range(array_len)],
                     "motif": motif_array,
                     "strand": orientation_array,
                     "color": color_array,
@@ -1152,10 +1161,10 @@ def waterfall(
                 color_array: List[str] = [colormap[m] for m in kmer_array]
                 array_len: int = len(kmer_array)
                 max_x: int = max(max_x, array_len)
-                track_data: pl.DataFrame({
+                track_data: pl.DataFrame = pl.DataFrame({
                     "chrom": ["seq"] * array_len,
-                    "start": list(range(array_len)),
-                    "end": list(range(array_len) + 1),
+                    "start": [i for i in range(array_len)],
+                    "end": [i + 1 for i in range(array_len)],
                     "kmer": kmer_array,
                     "strand": orientation_array,
                     "color": color_array,

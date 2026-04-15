@@ -1,7 +1,7 @@
-# plotting `pl`
+# plotting `anno.pl`
 
 ```{eval-rst}
-.. module:: vampire.pl
+.. module:: vampire.anno.pl
 ```
 
 ```{eval-rst}

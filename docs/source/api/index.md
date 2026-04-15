@@ -4,7 +4,10 @@
 :hidden: true
 :maxdepth: 2
 
-pp/index
-pl/index
-tl/index
+scan/pp/index
+scan/pl/index
+scan/tl/index
+anno/pp/index
+anno/pl/index
+anno/tl/index
 ```
