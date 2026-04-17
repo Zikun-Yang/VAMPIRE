@@ -142,7 +142,7 @@ def read_bed(
     """
     Read a BED or BED.GZ file using pysam and polars.
 
-    This function returns a :class:`polars.DataFrame`.
+    This function returns a :class:`polars.LazyFrame`.
 
     The input file is assumed to be in BED format with **at least
     three columns**:
@@ -227,7 +227,7 @@ def read_indexed_bed(
     start: int = 0, 
     end: int = 1e9,
     columns: Dict[str, pl.DataType] = BED_COLS,
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     """
     Read a indexed BED.GZ file using pysam and polars.
 
@@ -405,7 +405,7 @@ def read_anno(
     
     # check file existence
     if not file.endswith(".annotation.tsv"):
-        raise valueError(f"Inpuy file should be *.annotation.tsv, but found: {file}")
+        raise ValueError(f"Input file should be *.annotation.tsv, but found: {file}")
     anno_file = Path(file)
     if not anno_file.exists():
         raise FileNotFoundError(anno_file)

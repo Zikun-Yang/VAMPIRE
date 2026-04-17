@@ -1,11 +1,11 @@
-# preprocessing `pp`
+# anno preprocessing `anno.pp`
 
 ```{eval-rst}
-.. module:: vampire.pp
+.. module:: vampire.anno.pp
 ```
 
 ```{eval-rst}
-.. currentmodule:: vampire
+.. currentmodule:: vampire.anno.pp
 ```
 
 ## Read
@@ -15,9 +15,8 @@
    :nosignatures:
    :toctree: ../generated/
 
-   pp.read_bed
-   pp.read_bedgraph
-   pp.read_indexed_bed
-   pp.read_anno
-
+   read_bed
+   read_bedgraph
+   read_indexed_bed
+   read_anno
 ```

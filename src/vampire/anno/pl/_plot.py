@@ -76,7 +76,7 @@ def trackplot(
     title : str, optional
         Title of the figure. Default is an empty string.
 
-    xaxis_title : str, optional
+    x_title : str, optional
         Title of the x axis. Default is `"Position (bp)"`.
     
     figsize : Tuple[int, int], optional
@@ -998,8 +998,8 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
 def waterfall(
     adata: ad.AnnData,
     feature: Literal["motif", "kmer"] = "motif",
-    sample_order: Option[List[str]] = None,
-    ksize: Option[int] = None,
+    sample_order: Optional[List[str]] = None,
+    ksize: Optional[int] = None,
     color: str = "id",
     colormap: dict | List | str = "rainbow",
     figsize: Tuple[int, int] = (600, 1000),
@@ -1047,7 +1047,7 @@ def waterfall(
 
     track_name_dx: float, optional
         Horizontal offset applied to track name position along the x-axis,expressed as a fraction of the total width.
-        Default is -0.1.
+        Default is -0.01.
 
     **kwargs
         Additional keyword arguments passed to Plotly `update_layout`.
@@ -1072,7 +1072,7 @@ def waterfall(
     ...     margin = dict(l=120),
     ... )
 
-    >>> vp.pl.waterfall(
+    >>> vp.anno.pl.waterfall(
     ...     adata,
     ...     feature = "kmer",
     ...     ksize = 5
@@ -1480,7 +1480,7 @@ def logo_from_matrix(
     --------
     >>> import numpy as np
     >>> import vampire as vp
-    >>> vp.anno.logo_from_matrix(
+    >>> vp.anno.pl.logo_from_matrix(
     ...     np.array([
     ...         [8, 1, 0, 1, 0, 0, 0],
     ...         [0, 7, 0, 0, 1, 2, 0],
