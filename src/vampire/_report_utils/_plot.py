@@ -6,160 +6,514 @@ from typing import List, Dict
 from ._motif_processing import collapse_long_motif
 from ._stats_basic import calculate_window_stats
 
+DROPMENU_HEIGHT: int = 60
+
 def plot_enriched_motifs_by_copy_number(df: pl.DataFrame,
                                         max_motif_length_to_collapse: int = 10,
                                         topn: int = 10,
                                         max_bubble_size: int = 50,
-                                        min_bubble_size: int = 10) -> go.Figure:
+                                        min_bubble_size: int = 10,
+                                        legend_bubble_num: int = 5,
+) -> go.Figure:
     """
     Plot the enriched motifs by copy number
     Input:
         df: pl.DataFrame
+        max_motif_length_to_collapse: int
+        topn: int
+        max_bubble_size: int
+        min_bubble_size: int
+        legend_bubble_num: int
     Output:
         fig: go.Figure (bubble plot)
     """
     # prepare data
     enriched_df = (
         df.group_by("canonical_motif")
-            .agg(pl.len().alias("tr_number"),
+            .agg(pl.len().alias("tr_count"),
                  pl.col("copyNumber").sum().alias("total_copy_number"))
             .sort("total_copy_number", descending=True)
-            .select(["canonical_motif", "tr_number", "total_copy_number"])
+            .select(["canonical_motif", "tr_count", "total_copy_number"])
             .head(topn)
         )
     enriched_df = enriched_df.with_columns([
         pl.col("canonical_motif").map_elements(lambda x: collapse_long_motif(x, max_length=max_motif_length_to_collapse), return_dtype=pl.Utf8).alias("shortened_motif")
     ])
-    max_tr_number = enriched_df["tr_number"].max()
-    sizes = (enriched_df["tr_number"] / max_tr_number * max_bubble_size).to_list()
-    sizes = [max(min_bubble_size, s) for s in sizes]
 
-    fig = sp.make_subplots(rows=1, cols=1)
-    fig.add_trace(go.Scatter(x=enriched_df["total_copy_number"],
-                            y=enriched_df["shortened_motif"],
-                            mode="markers",
-                            name="Enriched",
-                            marker_size=sizes,
-                            customdata=enriched_df,
-                            hovertemplate=(
-                                "Canonical Motif: %{customdata[0]}<br>"
-                                "TR Number: %{customdata[1]}<br>"
-                                "Total Copy Number: %{customdata[2]}"
-                            ),
-                            marker=dict(color="rgba(193,18,31,0.4)"), # red with 0.4 opacity
-                            hoverlabel=dict(
-                                bgcolor="lightgrey" # background color of the hover box
-                            )))
+    max_tr_count = enriched_df["tr_count"].max()
+    min_tr_count = enriched_df["tr_count"].min()
+
+    def _scale_size(v):
+        if max_tr_count == min_tr_count:
+            return (min_bubble_size + max_bubble_size) / 2
+        norm = max(v - min_tr_count, 0) / (max_tr_count - min_tr_count)
+        return min_bubble_size + np.sqrt(norm) * (max_bubble_size - min_bubble_size)
+
+    sizes = [_scale_size(v) for v in enriched_df["tr_count"]]
+
+    # subplot: main + legend panel
+    fig = sp.make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=[0.85, 0.15],
+        horizontal_spacing=0.05,
+    )
+
+    # main bubble plot
+    fig.add_trace(
+        go.Scatter(
+            x=enriched_df["total_copy_number"],
+            y=enriched_df["shortened_motif"],
+            mode="markers",
+            customdata=enriched_df,
+            hovertemplate=(
+                "Canonical Motif: %{customdata[0]}<br>"
+                "TR Count: %{customdata[1]}<br>"
+                "Total Copy Number: %{customdata[2]}"
+            ),
+            marker=dict(
+                size=sizes,
+                sizemode="diameter",
+                sizeref=1,
+                color="rgba(193,18,31,0.4)",
+            ),
+            hoverlabel=dict(bgcolor="lightgrey"),
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+
+    # legend values
+    min_tr = enriched_df["tr_count"].min()
+    max_tr = enriched_df["tr_count"].max()
+
+    if legend_bubble_num >= len(enriched_df):
+        ref_vals = enriched_df["tr_count"].to_list()
+    else:
+        t_vals = np.linspace(0, 1, legend_bubble_num)
+        ref_vals = min_tr + (t_vals ** 2) * (max_tr - min_tr)
+        ref_vals = [int(round(v)) for v in ref_vals]
+
+    ref_vals = sorted(set(ref_vals)) # from small numbers to large numbers
+    diameter_list = [_scale_size(v) for v in ref_vals]
+    radii_list: List[float] = [s / 2 for s in diameter_list]
+
+    # --- legend layout calculation ---
+    FIG_WIDTH: int = 500
+    margin_l, margin_r = 20, 20
+    h_spacing = 0.02
+    col_widths = [0.6, 0.4]
+
+    # legend panel pixel size
+    usable_width = FIG_WIDTH - margin_l - margin_r
+    gap_px = h_spacing * usable_width
+    panel_width_px = (usable_width - gap_px) * col_widths[1] / sum(col_widths)
+    panel_height_px = 50 * topn
+
+    fixed_gap_px = 14
+    title_height_px = 50
+    x_offset_data = 0.05  # small left padding to avoid clipping
+
+    # x: all circles center-aligned; largest circle's left edge at x_offset_data
+    # xaxis2 range [0, 1], 1 data unit = panel_width_px pixels
+    max_r = max(radii_list)
+    x_center = x_offset_data + max_r / panel_width_px
+    x_array = [x_center] * len(ref_vals)
+
+    # fixed x for text labels: aligned to right edge of largest circle + small gap
+    text_gap_px = 14
+    text_x = x_center + max_r / panel_width_px + text_gap_px / panel_width_px
+
+    # y: compact, top-down
+    fixed_gap_data = fixed_gap_px / panel_height_px
+    title_gap_data = title_height_px / panel_height_px
+
+    y_array = []
+    y_cur = title_gap_data
+    for i, r in enumerate(radii_list):
+        r_data = r / panel_height_px
+        y_center = y_cur + r_data
+        y_array.append(y_center)
+        y_cur = y_center + r_data + fixed_gap_data
+
+    # y-axis range: keep legend in upper portion only
+    total_height = y_array[-1] + radii_list[-1] / panel_height_px
+    y_range_bottom = max(1.0, total_height * 1.5)
+
+    # subplot: main + legend panel
+    fig = sp.make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=col_widths,
+        horizontal_spacing=h_spacing
+    )
+
+    # main bubble plot
+    fig.add_trace(
+        go.Scatter(
+            x=enriched_df["total_copy_number"],
+            y=enriched_df["shortened_motif"],
+            mode="markers",
+            customdata=enriched_df,
+            hovertemplate=(
+                "Canonical Motif: %{customdata[0]}<br>"
+                "TR Count: %{customdata[1]}<br>"
+                "Total Copy Number: %{customdata[2]}"
+            ),
+            marker=dict(
+                size=sizes,
+                sizemode="diameter",
+                sizeref=1,
+                color="rgba(193,18,31,0.4)",
+            ),
+            hoverlabel=dict(bgcolor="lightgrey"),
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+
+    # legend panel
+    fig.add_trace(
+        go.Scatter(
+            x=x_array,
+            y=y_array,
+            mode="markers",
+            marker=dict(
+                size=diameter_list,
+                sizemode="diameter",
+                sizeref=1,
+                color="rgba(193,18,31,0.4)",
+            ),
+            hoverinfo="skip",
+            hovertemplate=None,
+            showlegend=False,
+        ),
+        row=1,
+        col=2,
+    )
+
+    # text labels: left-aligned to the right edge of the largest circle
+    for y, val in zip(y_array, ref_vals):
+        fig.add_annotation(
+            x=text_x,
+            y=y,
+            xref="x2",
+            yref="y2",
+            text=str(val),
+            showarrow=False,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=14),
+        )
+
+    # legend title: left-aligned with largest circle's left edge
+    fig.add_annotation(
+        text="TR count",
+        x=x_offset_data,
+        y=title_gap_data / 2,
+        xref="x2",
+        yref="y2",
+        showarrow=False,
+        font=dict(size=16),
+        xanchor="left",
+        yanchor="middle",
+    )
+
+    # layout
     fig.update_layout(
         height=50 * topn,
-        width=500,
-        # transparent background
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        # grid color
-        xaxis=dict(
-            title="Total Copy Number",
-            showline=True,       # show axis line
-            linecolor='black',   # axis line color
-            showgrid=True,
-            gridcolor='lightgrey',
-            gridwidth=0.7
-        ),
-        yaxis=dict(
-            title="Canonical Motif",
-            showline=True,
-            linecolor='black',
-            showgrid=True,
-            gridcolor='lightgrey',
-            gridwidth=0.7,
-            autorange="reversed"
-        ),
-        margin=dict(
-            l=20,   # left margin
-            r=20,   # right margin
-            t=20,   # top margin
-            b=20    # bottom margin
-        )
+        width=FIG_WIDTH,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=margin_l, r=margin_r, t=20, b=20),
     )
+
+    # main figure axis
+    fig.update_xaxes(
+        title="Total Copy Number",
+        showline=True,
+        linecolor="black",
+        showgrid=True,
+        gridcolor="lightgrey",
+        gridwidth=0.7,
+        ticks="outside",
+        row=1,
+        col=1,
+    )
+
+    fig.update_yaxes(
+        title="Canonical Motif",
+        showline=True,
+        linecolor="black",
+        showgrid=True,
+        gridcolor="lightgrey",
+        gridwidth=0.7,
+        autorange="reversed",
+        row=1,
+        col=1,
+    )
+
+    # legend panel axis
+    fig.update_xaxes(
+        range=[0, 1],
+        showgrid=False,
+        showticklabels=False,
+        zeroline=False,
+        fixedrange=True,
+        row=1,
+        col=2,
+    )
+
+    fig.update_yaxes(
+        showgrid=False,
+        showticklabels=False,
+        zeroline=False,
+        range=[y_range_bottom, 0],
+        fixedrange=True,
+        row=1,
+        col=2,
+    )
+
     return fig
 
-def plot_enriched_motifs_by_tr_number(df: pl.DataFrame,
+def plot_enriched_motifs_by_tr_count(df: pl.DataFrame,
                                       max_motif_length_to_collapse: int = 10,
                                       topn: int = 10,
                                       max_bubble_size: int = 50,
-                                      min_bubble_size: int = 10) -> go.Figure:
+                                      min_bubble_size: int = 10,
+                                      legend_bubble_num: int = 5,
+) -> go.Figure:
     """
-    Plot the enriched motifs by TR number
+    Plot the enriched motifs by TR count
     Input:
         df: pl.DataFrame
+        max_motif_length_to_collapse: int
+        topn: int
+        max_bubble_size: int
+        min_bubble_size: int
+        legend_bubble_num: int
     Output:
         fig: go.Figure (bubble plot)
     """
     # prepare data
     enriched_df = (
         df.group_by("canonical_motif")
-            .agg(pl.len().alias("tr_number"),
+            .agg(pl.len().alias("tr_count"),
                  pl.col("copyNumber").sum().alias("total_copy_number"))
-            .sort("tr_number", descending=True)
-            .select(["canonical_motif", "tr_number", "total_copy_number"])
+            .sort("tr_count", descending=True)
+            .select(["canonical_motif", "tr_count", "total_copy_number"])
             .head(topn)
         )
     enriched_df = enriched_df.with_columns([
         pl.col("canonical_motif").map_elements(lambda x: collapse_long_motif(x, max_length=max_motif_length_to_collapse), return_dtype=pl.Utf8).alias("shortened_motif")
     ])
-    max_copy_number = enriched_df["total_copy_number"].max()
-    sizes = (enriched_df["total_copy_number"] / max_copy_number * max_bubble_size).to_list()
-    sizes = [max(min_bubble_size, s) for s in sizes]
-    
-    # plot
-    fig = sp.make_subplots(rows=1, cols=1)
-    fig.add_trace(go.Scatter(x=enriched_df["tr_number"],
-                            y=enriched_df["shortened_motif"],
-                            mode="markers",
-                            name="Enriched",
-                            marker_size=sizes,
-                            customdata=enriched_df,
-                            hovertemplate=(
-                                "Canonical Motif: %{customdata[0]}<br>"
-                                "TR Number: %{customdata[1]}<br>"
-                                "Total Copy Number: %{customdata[2]}"
-                            ),
-                            marker=dict(color="rgba(193,18,31,0.4)"), # red with 0.4 opacity
-                            hoverlabel=dict(
-                                bgcolor="lightgrey" # background color of the hover box
-                            )))
 
+    max_tr_count = enriched_df["total_copy_number"].max()
+    min_tr_count = enriched_df["total_copy_number"].min()
+
+    def _scale_size(v):
+        if max_tr_count == min_tr_count:
+            return (min_bubble_size + max_bubble_size) / 2
+        norm = max(v - min_tr_count, 0.0) / (max_tr_count - min_tr_count)
+        return min_bubble_size + np.sqrt(norm) * (max_bubble_size - min_bubble_size)
+
+    # main figure values
+    sizes = [_scale_size(v) for v in enriched_df["total_copy_number"]]
+
+    # legend values
+    min_tr = enriched_df["total_copy_number"].min()
+    max_tr = enriched_df["total_copy_number"].max()
+
+    if legend_bubble_num >= len(enriched_df):
+        ref_vals = enriched_df["total_copy_number"].to_list()
+    else:
+        t_vals = np.linspace(0, 1, legend_bubble_num)
+        ref_vals = min_tr + (t_vals ** 2) * (max_tr - min_tr)
+        ref_vals = [int(round(v)) for v in ref_vals]
+
+    ref_vals = sorted(set(ref_vals))
+    diameter_list = [_scale_size(v) for v in ref_vals]
+    radii_list: List[float] = [s / 2 for s in diameter_list]
+
+    # --- legend layout calculation ---
+    FIG_WIDTH: int = 500
+    margin_l, margin_r = 20, 20
+    h_spacing = 0.02
+    col_widths = [0.6, 0.4]
+
+    # legend panel pixel size
+    usable_width = FIG_WIDTH - margin_l - margin_r
+    gap_px = h_spacing * usable_width
+    panel_width_px = (usable_width - gap_px) * col_widths[1] / sum(col_widths)
+    panel_height_px = 50 * topn
+
+    fixed_gap_px = 14
+    title_height_px = 50
+    x_offset_data = 0.05  # small left padding to avoid clipping
+
+    # x: all circles center-aligned; largest circle's left edge at x_offset_data
+    # xaxis2 range [0, 1], 1 data unit = panel_width_px pixels
+    max_r = max(radii_list)
+    x_center = x_offset_data + max_r / panel_width_px
+    x_array = [x_center] * len(ref_vals)
+
+    # fixed x for text labels: aligned to right edge of largest circle + small gap
+    text_gap_px = 14
+    text_x = x_center + max_r / panel_width_px + text_gap_px / panel_width_px
+
+    # y: compact, top-down
+    fixed_gap_data = fixed_gap_px / panel_height_px
+    title_gap_data = title_height_px / panel_height_px
+
+    y_array = []
+    y_cur = title_gap_data
+    for i, r in enumerate(radii_list):
+        r_data = r / panel_height_px
+        y_center = y_cur + r_data
+        y_array.append(y_center)
+        y_cur = y_center + r_data + fixed_gap_data
+
+    # y-axis range: keep legend in upper portion only
+    total_height = y_array[-1] + radii_list[-1] / panel_height_px
+    y_range_bottom = max(1.0, total_height * 1.5)
+
+    # subplot: main + legend panel
+    fig = sp.make_subplots(
+        rows=1,
+        cols=2,
+        column_widths=col_widths,
+        horizontal_spacing=h_spacing
+    )
+
+    # main bubble plot
+    fig.add_trace(
+        go.Scatter(
+            x=enriched_df["tr_count"],
+            y=enriched_df["shortened_motif"],
+            mode="markers",
+            customdata=enriched_df,
+            hovertemplate=(
+                "Canonical Motif: %{customdata[0]}<br>"
+                "TR Count: %{customdata[1]}<br>"
+                "Total Copy Number: %{customdata[2]}"
+            ),
+            marker=dict(
+                size=sizes,
+                sizemode="diameter",
+                sizeref=1,
+                color="rgba(193,18,31,0.4)",
+            ),
+            hoverlabel=dict(bgcolor="lightgrey"),
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+
+    # legend panel
+    fig.add_trace(
+        go.Scatter(
+            x=x_array,
+            y=y_array,
+            mode="markers",
+            marker=dict(
+                size=diameter_list,
+                sizemode="diameter",
+                sizeref=1,
+                color="rgba(193,18,31,0.4)",
+            ),
+            hoverinfo="skip",
+            hovertemplate=None,
+            showlegend=False,
+        ),
+        row=1,
+        col=2,
+    )
+
+    # text labels: left-aligned to the right edge of the largest circle
+    for y, val in zip(y_array, ref_vals):
+        fig.add_annotation(
+            x=text_x,
+            y=y,
+            xref="x2",
+            yref="y2",
+            text=str(val),
+            showarrow=False,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=14),
+        )
+
+    # legend title: left-aligned with largest circle's left edge
+    fig.add_annotation(
+        text="Total copy number",
+        x=x_offset_data,
+        y=title_gap_data / 2,
+        xref="x2",
+        yref="y2",
+        showarrow=False,
+        font=dict(size=16),
+        xanchor="left",
+        yanchor="middle",
+    )
+
+    # layout
     fig.update_layout(
         height=50 * topn,
-        width=500,
-        # transparent background
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        # grid color
-        xaxis=dict(
-            title="TR Number",
-            showline=True,       # show axis line
-            linecolor='black',   # axis line color
-            showgrid=True,
-            gridcolor='lightgrey',
-            gridwidth=0.7
-        ),
-        yaxis=dict(
-            title="Canonical Motif",
-            showline=True,
-            linecolor='black',
-            showgrid=True,
-            gridcolor='lightgrey',
-            gridwidth=0.7,
-            autorange="reversed"
-        ),
-        margin=dict(
-            l=20,   # left margin
-            r=20,   # right margin
-            t=20,   # top margin
-            b=20    # bottom margin
-        )
+        width=FIG_WIDTH,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=margin_l, r=margin_r, t=20, b=20),
     )
+
+    # main figure axis
+    fig.update_xaxes(
+        title="TR Count",
+        showline=True,
+        linecolor="black",
+        showgrid=True,
+        gridcolor="lightgrey",
+        gridwidth=0.7,
+        ticks="outside",
+        row=1,
+        col=1,
+    )
+
+    fig.update_yaxes(
+        title="Canonical Motif",
+        showline=True,
+        linecolor="black",
+        showgrid=True,
+        gridcolor="lightgrey",
+        gridwidth=0.7,
+        autorange="reversed",
+        row=1,
+        col=1,
+    )
+
+    # legend panel axis
+    fig.update_xaxes(
+        range=[0, 1],
+        showgrid=False,
+        showticklabels=False,
+        zeroline=False,
+        fixedrange=True,
+        row=1,
+        col=2,
+    )
+
+    fig.update_yaxes(
+        showgrid=False,
+        showticklabels=False,
+        zeroline=False,
+        range=[y_range_bottom, 0],
+        fixedrange=True,
+        row=1,
+        col=2,
+    )
+
     return fig
 
 def plot_entropy_distribution(df: pl.DataFrame, bin_width: float = 0.02) -> go.Figure:
@@ -202,7 +556,9 @@ def plot_entropy_distribution(df: pl.DataFrame, bin_width: float = 0.02) -> go.F
             linecolor='black',   # axis line color
             showgrid=True,
             gridcolor='lightgrey',
-            gridwidth=0.7
+            gridwidth=0.7,
+            ticks="outside",
+            showticklabels=True
         ),
         yaxis=dict(
             title="Count",
@@ -270,19 +626,30 @@ def plot_length_period_distribution(df: pl.DataFrame, nbin: int = 100) -> go.Fig
                         )))
     buttons = [dict(label=name,
                 method="update",
-                args=[{"visible": [metric == m for m in metrics]}
+                args=[{"visible": [metric == m for m in metrics]},
+                      {"xaxis": {"title": {"text": name},
+                                 "showline": True,
+                                 "linecolor": "black",
+                                 "showgrid": True,
+                                 "gridcolor": "lightgrey",
+                                 "gridwidth": 0.7,
+                                 "ticks": "outside",
+                                 "showticklabels": True}}
                 ])
             for metric, name in zip(metrics, metric_names)]
+    fig_height = 400
     fig.update_layout(
-        height=400,
+        height=fig_height,
         width=500,
         updatemenus=[dict(
             type="dropdown",
             direction="down",
             bgcolor="white",
             bordercolor="black",
-            x=0.15,
-            y=1.2,
+            x=0.0,
+            xanchor="left",
+            y=1 + DROPMENU_HEIGHT / fig_height,
+            yanchor="top",
             showactive=True,
             buttons=buttons
         )],
@@ -296,7 +663,9 @@ def plot_length_period_distribution(df: pl.DataFrame, nbin: int = 100) -> go.Fig
             linecolor='black',   # axis line color
             showgrid=True,
             gridcolor='lightgrey',
-            gridwidth=0.7
+            gridwidth=0.7,
+            ticks="outside",
+            showticklabels=True
         ),
         yaxis=dict(
             title="Count",
@@ -307,16 +676,13 @@ def plot_length_period_distribution(df: pl.DataFrame, nbin: int = 100) -> go.Fig
             gridwidth=0.7
         ),
         margin=dict(
-            l=20,   # left margin
-            r=20,   # right margin
-            t=20,   # top margin
-            b=20    # bottom margin
+            l=20,
+            r=20,
+            t=55,
+            b=20
         )
     )
     return fig
-
-
-
 
 def plot_smoothness_score_distribution(smoothness: Dict[int, pl.DataFrame]) -> go.Figure:
     """
@@ -355,14 +721,20 @@ def plot_smoothness_score_distribution(smoothness: Dict[int, pl.DataFrame]) -> g
         )
         buttons.append(btn)
 
+    max_ksize_idx = ksize_list.index(max_ksize)
+    fig_height = 400
     fig.update_layout(
+        height=fig_height,
         updatemenus=[dict(
             type="dropdown",
             direction="down",
             bgcolor="white",
             bordercolor="black",
             x=0.0,
-            y=1.2,
+            xanchor="left",
+            y=1 + DROPMENU_HEIGHT / fig_height,
+            yanchor="top",
+            active=max_ksize_idx,
             showactive=True,
             buttons=buttons
         )],
@@ -377,7 +749,9 @@ def plot_smoothness_score_distribution(smoothness: Dict[int, pl.DataFrame]) -> g
             linecolor='black',   # axis line color
             showgrid=True,
             gridcolor='lightgrey',
-            gridwidth=0.7
+            gridwidth=0.7,
+            ticks="outside",
+            showticklabels=True
         ),
         yaxis=dict(
             title="Count",
@@ -385,13 +759,15 @@ def plot_smoothness_score_distribution(smoothness: Dict[int, pl.DataFrame]) -> g
             linecolor='black',
             showgrid=True,
             gridcolor='lightgrey',
-            gridwidth=0.7
+            gridwidth=0.7,
+            ticks="outside",
+            showticklabels=True
         ),
         margin=dict(
-            l=20,   # left margin
-            r=20,   # right margin
-            t=20,   # top margin
-            b=20    # bottom margin
+            l=20,
+            r=20,
+            t=55,
+            b=20
         )
     )
     return fig
@@ -407,13 +783,15 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
     Output:
         fig: go.Figure (bar plot)
     """
+    import numpy as np
 
     df = df.with_columns([
         (pl.col("end") - pl.col("start") + 1).alias("length")
     ])
 
     # windowing
-    win_len = max(fasta_metainfo.values()) // resolution
+    win_len: int = max(fasta_metainfo.values()) // resolution
+    win_len = max(10, win_len) # minimum length is 10 bp
     records = []
 
     for chrom, chr_len in fasta_metainfo.items():
@@ -422,8 +800,6 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
         for i in range(n_win):
             w_start = int(i * win_len)
             w_end = int(min((i + 1) * win_len - 1, chr_len - 1))
-            if w_end - w_start + 1 <= 100:
-                continue
 
             tr_fraction, med_len, med_motif_len = calculate_window_stats(chrom_df, w_start, w_end)
 
@@ -455,12 +831,13 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
     metric_names = ["TR Fraction", "Median TR Length", "Median Motif Length"]
     colors = ["rgba(193,18,31,{})", "rgba(88,129,87,{})", "rgba(0,119,182,{})"]  # red, green, blue
 
-    for metric, name, color_template in zip(metrics, metric_names, colors):
+    for metric, name, color in zip(metrics, metric_names, colors):
         x_vals = []
         y_vals = []
         widths = []
         bases = []
         customdata = []
+        metric_values = []
 
         for row in win_df.iter_rows(named=True):
             val = row[metric]
@@ -472,13 +849,30 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
             y_vals.append(chrom_idx[row["chrom"]])
             # for hover
             customdata.append([row["win_start"], row["win_end"], row["tr_fraction"], row["tr_len_median"], row["motif_len_median"]])
+            metric_values.append(val)
+
+        max_val = max(metric_values) if metric_values else 1
 
         fig.add_trace(go.Bar(
             x=x_vals,
             y=y_vals,
             base=bases,
             width=widths,
-            marker=dict(color=[color_template.format(min(1, row["tr_fraction"]/100.0)) for row in win_df.iter_rows(named=True) if row[metric] is not None and row[metric] > 0]),
+            marker=dict(
+                color=metric_values,
+                colorscale=[
+                    [0.0, color.format(0.0)],
+                    [1.0, color.format(1.0)]
+                ],
+                cmin=0,
+                cmax=max_val,
+                showscale=True,
+                colorbar=dict(
+                    title=name,
+                    bgcolor="rgba(0,0,0,0)",
+                    outlinewidth=0
+                )
+            ),
             customdata=customdata,
             hovertemplate=(
                 "Window: %{customdata[0]} - %{customdata[1]} bp<br>"
@@ -488,7 +882,7 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
             ),
             orientation="h",
             name=name,
-            visible=True if metric == "tr_fraction" else False
+            visible=True if metric == "tr_fraction" else False # show tr_fraction by default
         ))
 
     # add background chromosome rectangles
@@ -509,6 +903,7 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
     fig.update_yaxes(
         tickvals=list(chrom_idx.values()),
         ticktext=list(chrom_idx.keys()),
+        range=[-0.5, len(chroms) - 0.5],
         autorange="reversed"
     )
 
@@ -518,8 +913,9 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
                     {"title": f"Tandem Repeat Distribution: {name}"}])
             for metric, name in zip(metrics, metric_names)]
 
+    fig_height = 20 + 200 + 50 * (len(chroms) - 1)
     fig.update_layout(
-        height=20 + 200 + 50 * (len(chroms) - 1),
+        height=fig_height,
         width=1000,
         updatemenus=[
             dict(
@@ -528,16 +924,25 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
                 bgcolor="white",
                 bordercolor="black",
                 x=0.0,
-                y=1.4,
+                xanchor="left",
+                y=1 + DROPMENU_HEIGHT / fig_height,
+                yanchor="top",
                 showactive=True,
                 buttons=buttons
             )
         ],
-        xaxis_title="Genomic Coordinate (bp)",
+        xaxis=dict(
+            title="Genomic coordinate (bp)",
+            showline=True,
+            linewidth=1,
+            linecolor="black",
+            ticks="outside",
+            showticklabels=True
+        ),
         yaxis_title="Chromosome",
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=20, r=20, t=20, b=20)
+        margin=dict(l=20, r=20, t=55, b=20)
     )
 
     return fig

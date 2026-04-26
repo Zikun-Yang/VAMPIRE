@@ -2,10 +2,9 @@
 [![PyPI](https://img.shields.io/pypi/v/vampire-tr)](https://pypi.org/project/vampire-tr)
 [![PyPI Downloads](https://img.shields.io/pepy/dt/vampire-tr?logo=pypi)](https://pepy.tech/project/vampire-tr)
 
-# VAMPIRE - TODO
-TODO TODO 
-TODO TODO
-TODO TODO
+# VAMPIRE
+
+VAMPIRE is a unified framework for *de novo* tandem repeat (TR) motif annotation, structural decomposition, and variation profiling.
 
 **Version:** |release|
 

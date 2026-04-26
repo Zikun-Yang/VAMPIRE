@@ -50,6 +50,7 @@ docs = [
     "sphinx-rtd-theme>=1.0",
     "sphinx-autodoc-typehints>=1.0",
     "myst_parser",
+    "myst-nb",
     "sphinx-book-theme==1.1.4",
     "scanpydoc==0.17.3"
 ]
@@ -68,6 +69,5 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vampire.resources" = ["refMotif.fa",
-		       "scan_web_summary_template.html"]
+"vampire.resources" = ["**/*"]
 

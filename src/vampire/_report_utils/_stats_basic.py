@@ -163,10 +163,8 @@ def calculate_window_stats(chrom_df: pl.DataFrame, w_start: int, w_end: int) -> 
     for row in sub.iter_rows(named=True):
         if row["end"] < cur_pos:
             continue
-        elif row["start"] > cur_pos:
-            cum_len += row["end"] - row["start"] + 1
         else:
-            cum_len += row["end"] - cur_pos + 1
+            cum_len += min(row["end"], w_end) - max(row["start"], cur_pos) + 1
         cur_pos = row["end"] + 1
 
     tr_fraction = cum_len / (w_end - w_start + 1)

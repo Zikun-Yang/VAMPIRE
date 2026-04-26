@@ -25,6 +25,8 @@
    :toctree: ../generated/
 
    waterfall
+   waterfall_legend
+   heatmap
 ```
 
 ## Motif variation

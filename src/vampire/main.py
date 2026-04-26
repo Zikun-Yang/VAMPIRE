@@ -125,7 +125,7 @@ def main():
     decompose_group.add_argument('-m', '--motif', type=str, default='base', help='Reference motif set path [base]')
     decompose_group.add_argument('-n', '--motifnum', type=int, default=30, help='Maximum number of motifs [30]')
     decompose_group.add_argument('--abud-threshold', type=float, default=0.01, help='Minimum threshold compared with top edge weight [0.01]')
-    decompose_group.add_argument('--abud-min', type=int, default=3, help='Minimum edge weight in De Bruijn graph [3]')
+    decompose_group.add_argument('--abud-min', type=int, default=1, help='Minimum edge weight in De Bruijn graph [1]')
     decompose_group.add_argument('--no-denovo', action='store_true', help='Do not de novo find motifs, use reference motifs to annotate [False]')
 
     # Annotation Options
@@ -141,6 +141,7 @@ def main():
     # Output Options
     output_group = parser_anno.add_argument_group('Output Options')
     output_group.add_argument("--skip-report", action="store_true", default=False, help="Skip HTML report generation [False]")
+    output_group.add_argument("--skip-h5ad", action="store_true", default=False, help="Skip h5ad generation [False]")
     output_group.add_argument('-s', '--min-score', dest='min_score', type=float, default=5, help='Minimum row score for concise.tsv output [5]')
 
     # ------------------------------------------------------------
@@ -233,6 +234,8 @@ def main():
         logging.getLogger("numpy").setLevel(logging.WARNING)
         logging.getLogger("numba").setLevel(logging.WARNING)
         logging.getLogger("plotly").setLevel(logging.WARNING)
+        logging.getLogger("h5py").setLevel(logging.WARNING)
+        logging.getLogger("numcodecs").setLevel(logging.WARNING)
     else:
         logging.basicConfig(
             level=logging.INFO,
@@ -245,39 +248,31 @@ def main():
 
     match cfg.get("command"):
         case "scan":
-            from vampire.scan import run_scan
+            from vampire._scan import run_scan
             run_scan(cfg)
 
         case "integrate":
-            from vampire.integrate import run_integrate
+            from vampire._integrate import run_integrate
             run_integrate(cfg)
 
         case "anno":
-            from vampire.anno import run_anno
+            from vampire._anno import run_anno
             run_anno(cfg)
 
         case "generator":
-            from vampire.generator import run_generator
+            from vampire._generator import run_generator
             run_generator(cfg)
 
-        case "mkref":
-            from vampire.mkref import run_mkref
-            run_mkref(cfg)
-
         case "evaluate":
-            from vampire.evaluate import run_evaluate
+            from vampire._evaluate import run_evaluate
             run_evaluate(cfg)
 
         case "refine":
-            from vampire.refine import run_refine
+            from vampire._refine import run_refine
             run_refine(cfg)
 
-        case "logo":
-            from vampire.logo import run_logo
-            run_logo(cfg)
-
         case "identity":
-            from vampire.identity import run_identity
+            from vampire._identity import run_identity
             run_identity(cfg)
 
         case _:

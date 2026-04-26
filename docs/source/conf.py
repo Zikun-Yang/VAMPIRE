@@ -47,15 +47,37 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx_autodoc_typehints",  # needs to be after napoleon
-    "myst_parser",
+    "myst_nb",
     "sphinx_design",
+]
+
+# -- Options for myst-nb (Jupyter Notebook support) --------------------------
+
+# Execution mode: "auto" = execute if no outputs present, "force" = always execute,
+# "off" = never execute, "cache" = execute and cache outputs.
+nb_execution_mode = "auto"
+
+# Exclude patterns from execution (e.g., long-running notebooks)
+# nb_execution_excludepatterns = ["tutorials/analysis/*.ipynb"]
+
+# Timeout for notebook execution (seconds)
+nb_execution_timeout = 300
+
+# Render image options for notebook outputs
+nb_render_image_options = {"width": "100%"}
+
+# Allow plotly interactive outputs in HTML
+nb_mime_priority_overrides = [
+    ("html", "application/vnd.plotly.v1+json", 10),
+    ("html", "image/png", 5),
 ]
 
 # Generate the API documentation when building
 
 source_suffix = {
     '.rst': 'restructuredtext',
-    '.md': 'markdown',
+    '.md': 'myst-nb',
+    '.ipynb': 'myst-nb',
 }
 
 myst_enable_extensions = [

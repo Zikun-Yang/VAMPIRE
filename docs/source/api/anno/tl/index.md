@@ -9,7 +9,21 @@
 ```
 
 ## alignment
-TO do ...
+
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
+   align
+```
 
 ## haplotype clustering
-TO do ...
+
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
+   haplotype
+```

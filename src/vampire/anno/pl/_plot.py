@@ -13,6 +13,123 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Module-level colormap constants
+_RAINBOW_COLORMAP: List[str] = [
+    "#f94144", "#f8961e", "#f9c74f", "#90be6d", "#43aa8b", "#4d908e", "#577590", "#277da1", "#5983f2", "#898bf1",
+    "#8945dc"
+]
+_GLASBEY_COLORMAP: List[str] = [
+    "#5983f2", '#87db96', '#eef248', '#f25b76', '#f29dd3', '#38abbd', '#f2b668', '#a570f2', '#f2b668', '#288126',
+    '#3e3ed1', '#48f0d1', '#987b74', '#c5c2f2', '#96ab83', '#b639b1', '#63586e', '#722222', '#428acd', '#f1eba8',
+    '#154715', '#877928', '#f2948c', '#e2bebe', '#627767', '#afe0f2', '#e04392', '#a386af', '#6a2e9b', '#3bbc38',
+    '#965e2d', '#945361', '#c0bc39', '#768190', '#31a68d', '#9fa3f2', '#583f41', '#361010', '#f0c8f2', '#c0dbc1',
+    '#d0863f', '#96aead', '#e07ff2', '#445c7b', '#ba7b97', '#545d31', '#bba183', '#297c80', '#adf248', '#7e4288',
+    '#91c0f2', '#7c6af2', '#879a2f', '#f14acf', '#b9a6bb', '#bb7266', '#705c4a', '#1e6249', '#3ccbca', '#d9ddf2',
+    '#661e53', '#7877a7', '#b99c37', '#d5c8a7', '#d9acf2', '#c44af0', '#8a6080', '#982d7a', '#669364', '#c8999b',
+    '#38412d', '#9ba5b9', '#868667', '#f27748', '#cdf2ee', '#bc91f2', '#84c5aa', '#c7f2a5', '#8f6aa8', '#714632',
+    '#f2b399', '#a03044', '#cc3d3d', '#5a2632', '#6f8f8d', '#f287ab', '#53656e', '#719bc1', '#a17b51', '#49d2f1',
+    '#37ba7f', '#5c3e59', '#9cc95b', '#bbca8f', '#645c99', '#4a2d1e', '#755f23', '#f2d175', '#923cc4', '#7bf0f2',
+    '#82274f', '#745960', '#2c7995', '#a18795', '#7e7387', '#898bf1', '#b95a92', '#c25569', '#f2afc1', '#b975b3',
+    '#33621e', '#28866b', '#66793b', '#9190b5', '#a4d1cc', '#c38f75', '#c7b578', '#5f1f68', '#916358', '#b3c2d0',
+    '#e9f2d4', '#43e044', '#c293b8', '#6638bb', '#7d9581', '#6c6b4f', '#aaf2c4', '#376eb7', '#b6a5e0', '#589b3d',
+    '#634b79', '#154837', '#8eb6c8', '#90472b', '#456861', '#ae3470', '#f29d71', '#f2d4e3', '#794460', '#24310e',
+    '#986c77', '#68aba8', '#97975b', '#45754b', '#b86237', '#c6dc6b', '#8945dc', '#84b26a', '#a5bba8', '#cf7587',
+    '#cd9c62', '#ef9bf2', '#4e5e4d', '#d1c4df', '#734146', '#618e9c', '#77a3f2', '#a437ba', '#deafd0', '#f2c598',
+    '#434414', '#b4cdf2', '#a3aede', '#5e6f8b', '#db80b8', '#9b92a7', '#534e35', '#b17ac9', '#9988d5', '#b78082',
+    '#d840d7', '#afae91', '#362e10', '#d794ad', '#a45851', '#a5b167', '#79ab8a', '#9ec79b', '#a78f60', '#266171',
+    '#2b9086', '#55231a', '#607779', '#395332', '#d98468', '#5a4536', '#8266b2', '#505565', '#c490d1', '#944d8c',
+    '#c9dde5', '#46b4df', '#9e7696', '#dbb641', '#88f28a', '#e5d844', '#714f22', '#5b3346', '#7f8ec0', '#829ba7',
+    '#4bddae', '#afebd8', '#7d2574', '#867059', '#d76b60', '#af657c', '#77577f', '#f2d2c1', '#6b76bd', '#d6b7a1',
+    '#f27be6', '#d2e3b2', '#b5764f', '#cca9b5', '#b38835', '#8d7ca9', '#f268b3', '#f2e3bd', '#3a534b', '#ae9185',
+    '#6e805d', '#b89ec7', '#5ae1f1', '#985579', '#9c659f', '#732b90', '#826a78', '#636284', '#eca6a3', '#dbd094',
+    '#6a6720', '#195354', '#5761f2', '#3dcd76', '#edb3f0', '#7b8e52', '#534019', '#92c9d1'
+]
+_SEQUENTIAL_COLORMAP: List[str] = [
+    "#FED976", "#FDBA9B", "#F7958D", "#ED96C9", "#ec57e5", "#a4cae4", "#7bd1ca", "#bfde9f", "#58d581",
+    "#FEBD0B", "#FC8D59", "#EF3B2C", "#DD3497", "#af14a8", "#4292C6", "#35978F", "#7FBC41", "#238B45",
+    "#DEA402", "#d24504", "#91150b", "#7d1552", "#3d073a", "#204c69", "#143936", "#3f5d20", "#092512"
+]
+_COLORMAP_OPTIONS: Dict[str, List[str]] = {
+    "rainbow": _RAINBOW_COLORMAP,
+    "glasbey": _GLASBEY_COLORMAP,
+    "sequential": _SEQUENTIAL_COLORMAP,
+}
+
+
+def _build_element_colormap(
+    adata: ad.AnnData,
+    feature: Literal["motif"] = "motif",
+    color: str = "id",
+    colormap: dict | List | str = "rainbow",
+) -> Dict[str, str]:
+    """
+    Build element-to-color mapping for waterfall visualization.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        Annotated data object.
+    feature : {"motif"}, default="motif"
+        Type of feature.
+    color : str, default="id"
+        Column name in `adata.var` used to assign coloring.
+    colormap : dict | list | str
+        Color mapping specification.
+
+    Returns
+    -------
+    Dict[str, str]
+        Mapping from element (motif id or color column value) to color hex string.
+    """
+    match feature:
+        case "motif":
+            all_id_list: List[str] = list(adata.var.index)
+            if color == "id":
+                id2element: Dict[str, Any] = {m: m for m in all_id_list}
+            else:
+                if color not in adata.var.columns:
+                    raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
+                id2element = dict(zip(adata.var.index, adata.var[color]))
+            all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
+
+        case _:
+            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+
+    element_num: int = len(all_element_list)
+
+    match colormap:
+        case str():
+            if colormap not in _COLORMAP_OPTIONS:
+                raise ValueError(f"colormap {colormap} is not found! please select from {_COLORMAP_OPTIONS.keys()}")
+            default_colormap: List[str] = _COLORMAP_OPTIONS[colormap]
+
+            if element_num > len(default_colormap):
+                logger.warning(f"Number of {color} is larger then number of colors in default colormap, using black to represent remaining motifs")
+                default_colormap += ["#1a1a1a"] * (element_num - len(default_colormap))
+            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, default_colormap[:element_num]))
+
+        case list():
+            if not all(isinstance(x, str) for x in colormap):
+                raise TypeError("List colormap must be List[str]")
+
+            if element_num > len(colormap):
+                logger.warning(f"Number of {color} is larger then number of colors in given colormap, using black to represent remaining motifs")
+                colormap += ["#1a1a1a"] * (element_num - len(colormap))
+            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, colormap[:element_num]))
+
+        case dict():
+            if not all(isinstance(k, str) and isinstance(v, str) for k, v in colormap.items()):
+                raise TypeError("Dict colormap must be Dict[str, str]")
+
+            missing = set(all_element_list) - set(colormap.keys())
+            if missing:
+                raise KeyError(f"Missing {color} in colormap: {missing}")
+
+            mapped_colormap: Dict[str, str] = colormap
+
+    return mapped_colormap
+
+
 """
 #
 # trackplot function
@@ -159,7 +276,6 @@ def trackplot(
         cols = 1,
         shared_xaxes = True,  # share x-axis across all subplots
         vertical_spacing = VERTICAL_SPACING,  # spacing between subplots
-        subplot_titles = [""] * n_tracks,  # no titles, use annotations instead
         row_heights = heights,
     )
 
@@ -997,17 +1113,16 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
 """
 def waterfall(
     adata: ad.AnnData,
-    feature: Literal["motif", "kmer"] = "motif",
+    feature: Literal["motif"] = "motif",
     sample_order: Optional[List[str]] = None,
-    ksize: Optional[int] = None,
     color: str = "id",
     colormap: dict | List | str = "rainbow",
-    figsize: Tuple[int, int] = (600, 1000),
+    figsize: Tuple[Optional[int], Optional[int]] = (None, None),
     track_name_dx: float = -0.01,
     **kwargs
 ) -> go.Figure:
     """
-    Create a waterfall plot for motif or k-mer composition across samples.
+    Create a waterfall plot for motif composition across samples.
 
     The waterfall plot visualizes motif variation across samples in a
     stacked or ordered layout, where each sample is represented along the
@@ -1018,19 +1133,14 @@ def waterfall(
     adata : ad.AnnData
         Annotated data object generated from `pp.read_anno()`.
 
-    feature : {"motif", "kmer"}, default="motif"
+    feature : {"motif"}, default="motif"
         Type of feature to visualize.
 
         - "motif": uses precomputed motif units from decomposition
-        - "kmer": uses k-mer features
 
     sample_order : list of str, optional
         Ordered list of sample identifiers defining the x-axis order.
         If None, samples are ordered based on the default order in `adata.obs`.
-
-    ksize : int, optional
-        k-mer size used when `feature="kmer"`.
-        If None, the k-mer size is inferred from the most frequent motif length.
 
     color : str, default="id"
         Column name in `adata.var` used to assign motif coloring.
@@ -1042,8 +1152,18 @@ def waterfall(
         - list: sequential color assignment following input order
         - str: use preset colormap: `rainbow`, `glasbey`, `sequential`
 
-    figsize : Tuple[int, int], optional
-        Figure size as (width, height) in pixels. Default is (600, 1000).
+    figsize : Tuple[Optional[int], Optional[int]], optional
+        Figure size as (width, height) in pixels. Default is (None, None).
+
+        - (None, None): auto-compute both dimensions from data.
+        - (w, None): fixed width, auto-compute height from sample count.
+        - (None, h): fixed height, auto-compute width from motif/kmer count.
+        - (w, h): use user-specified size.
+
+        width is proportional to the maximum sequence length (max_x) and
+        font size to prevent horizontal crowding. height is proportional
+        to the number of samples (n_tracks) and font size to keep track
+        labels readable and avoid vertical overlap or excessive sparsity.
 
     track_name_dx: float, optional
         Horizontal offset applied to track name position along the x-axis,expressed as a fraction of the total width.
@@ -1069,13 +1189,7 @@ def waterfall(
     ...     track_name_dx = -0.01
     ...     # kwargs for vp.anno.pl.trackplot()
     ...     font = dict(size=8),
-    ...     margin = dict(l=120),
-    ... )
-
-    >>> vp.anno.pl.waterfall(
-    ...     adata,
-    ...     feature = "kmer",
-    ...     ksize = 5
+    ...     margin = dict(l=120), # show
     ... )
     """
     import polars as pl
@@ -1093,146 +1207,47 @@ def waterfall(
     if missing:
         raise KeyError(f"Missing samples in sample_order: {missing}")
 
-    # check color
+    # build colormap
     match feature:
         case "motif":
-            all_id_list: List[str] = list(adata.var.index)
-            if color == "id":
-                id2element: Dict[str, Any] = {m: m for m in all_id_list}
-            else:
-                if color not in adata.var.columns:
-                    raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
-                id2element: Dict[str, Any] = Dict(zip(adata.var.index, adata.var[color]))
-            all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
-
-        case "kmer":
-            # get ksize
-            if ksize is None:
-                ksize: int = len(adata.var["motif"][0])
-            # get k-mers
-            key: str = f"kmer_array_k={ksize}"
-            if key not in adata.uns:
-                _get_kmer_array(adata, ksize) # TODO
-            kmer_array_dict: Dict[str, List[str]] = adata.uns[f"kmer_array_k={ksize}"]
-            all_element_list: List[Any] = list(dict.fromkeys(kmer for arr in kmer_array_dict.values() for kmer in arr))
-
+            mapped_colormap = _build_element_colormap(
+                adata, feature=feature, color=color, colormap=colormap
+            )
         case _:
             raise ValueError(f"Invalid feature: {feature}, feature must be 'motif' or 'kmer'")
-
-    # assign color
-    element_num: int = len(all_element_list)
-
-    RAINBOW_COLORMAP: List[str] = [
-        "#f94144", "#f8961e", "#f9c74f", "#90be6d", "#43aa8b", "#4d908e", "#577590", "#277da1", "#5983f2", "#898bf1", 
-        "#8945dc"
-    ]
-    GLASBEY_COLORMAP: List[str] = [
-        "#5983f2", '#87db96', '#eef248', '#f25b76', '#f29dd3', '#38abbd', '#f2b668', '#a570f2', '#f2b668', '#288126',
-        '#3e3ed1', '#48f0d1', '#987b74', '#c5c2f2', '#96ab83', '#b639b1', '#63586e', '#722222', '#428acd', '#f1eba8',
-        '#154715', '#877928', '#f2948c', '#e2bebe', '#627767', '#afe0f2', '#e04392', '#a386af', '#6a2e9b', '#3bbc38',
-        '#965e2d', '#945361', '#c0bc39', '#768190', '#31a68d', '#9fa3f2', '#583f41', '#361010', '#f0c8f2', '#c0dbc1',
-        '#d0863f', '#96aead', '#e07ff2', '#445c7b', '#ba7b97', '#545d31', '#bba183', '#297c80', '#adf248', '#7e4288',
-        '#91c0f2', '#7c6af2', '#879a2f', '#f14acf', '#b9a6bb', '#bb7266', '#705c4a', '#1e6249', '#3ccbca', '#d9ddf2',
-        '#661e53', '#7877a7', '#b99c37', '#d5c8a7', '#d9acf2', '#c44af0', '#8a6080', '#982d7a', '#669364', '#c8999b',
-        '#38412d', '#9ba5b9', '#868667', '#f27748', '#cdf2ee', '#bc91f2', '#84c5aa', '#c7f2a5', '#8f6aa8', '#714632',
-        '#f2b399', '#a03044', '#cc3d3d', '#5a2632', '#6f8f8d', '#f287ab', '#53656e', '#719bc1', '#a17b51', '#49d2f1',
-        '#37ba7f', '#5c3e59', '#9cc95b', '#bbca8f', '#645c99', '#4a2d1e', '#755f23', '#f2d175', '#923cc4', '#7bf0f2',
-        '#82274f', '#745960', '#2c7995', '#a18795', '#7e7387', '#898bf1', '#b95a92', '#c25569', '#f2afc1', '#b975b3',
-        '#33621e', '#28866b', '#66793b', '#9190b5', '#a4d1cc', '#c38f75', '#c7b578', '#5f1f68', '#916358', '#b3c2d0',
-        '#e9f2d4', '#43e044', '#c293b8', '#6638bb', '#7d9581', '#6c6b4f', '#aaf2c4', '#376eb7', '#b6a5e0', '#589b3d',
-        '#634b79', '#154837', '#8eb6c8', '#90472b', '#456861', '#ae3470', '#f29d71', '#f2d4e3', '#794460', '#24310e',
-        '#986c77', '#68aba8', '#97975b', '#45754b', '#b86237', '#c6dc6b', '#8945dc', '#84b26a', '#a5bba8', '#cf7587',
-        '#cd9c62', '#ef9bf2', '#4e5e4d', '#d1c4df', '#734146', '#618e9c', '#77a3f2', '#a437ba', '#deafd0', '#f2c598',
-        '#434414', '#b4cdf2', '#a3aede', '#5e6f8b', '#db80b8', '#9b92a7', '#534e35', '#b17ac9', '#9988d5', '#b78082',
-        '#d840d7', '#afae91', '#362e10', '#d794ad', '#a45851', '#a5b167', '#79ab8a', '#9ec79b', '#a78f60', '#266171',
-        '#2b9086', '#55231a', '#607779', '#395332', '#d98468', '#5a4536', '#8266b2', '#505565', '#c490d1', '#944d8c',
-        '#c9dde5', '#46b4df', '#9e7696', '#dbb641', '#88f28a', '#e5d844', '#714f22', '#5b3346', '#7f8ec0', '#829ba7',
-        '#4bddae', '#afebd8', '#7d2574', '#867059', '#d76b60', '#af657c', '#77577f', '#f2d2c1', '#6b76bd', '#d6b7a1',
-        '#f27be6', '#d2e3b2', '#b5764f', '#cca9b5', '#b38835', '#8d7ca9', '#f268b3', '#f2e3bd', '#3a534b', '#ae9185',
-        '#6e805d', '#b89ec7', '#5ae1f1', '#985579', '#9c659f', '#732b90', '#826a78', '#636284', '#eca6a3', '#dbd094',
-        '#6a6720', '#195354', '#5761f2', '#3dcd76', '#edb3f0', '#7b8e52', '#534019', '#92c9d1'
-    ]
-    SEQUENTIAL_COLORMAP: List[str] = [
-        "#FED976", "#FDBA9B", "#F7958D", "#ED96C9", "#ec57e5", "#a4cae4", "#7bd1ca", "#bfde9f", "#58d581",
-        "#FEBD0B", "#FC8D59", "#EF3B2C", "#DD3497", "#af14a8", "#4292C6", "#35978F", "#7FBC41", "#238B45",
-        "#DEA402", "#d24504", "#91150b", "#7d1552", "#3d073a", "#204c69", "#143936", "#3f5d20", "#092512"
-    ]
-    COLORMAP_OPTIONS: Dict[str, List[str]] = {
-        "rainbow": RAINBOW_COLORMAP,
-        "glasbey": GLASBEY_COLORMAP, 
-        "sequential": SEQUENTIAL_COLORMAP,
-    }
-
-    match colormap:
-        case str():
-            if colormap not in COLORMAP_OPTIONS:
-                raise ValueError(f"colormap {colormap} is not found! please select from {COLORMAP_OPTIONS.keys()}")
-            DEFAULT_COLORMAP: List[str] = COLORMAP_OPTIONS[colormap]
-            
-            if element_num > len(DEFAULT_COLORMAP):
-                logger.warning(f"Number of {color} is larger then number of colors in default colormap, using black to represent remaining motifs")
-                DEFAULT_COLORMAP += ["#1a1a1a"] * (element_num - len(DEFAULT_COLORMAP))
-            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, DEFAULT_COLORMAP[:element_num]))
-
-        case list():
-            if not all(isinstance(x, str) for x in colormap):
-                raise TypeError("List colormap must be List[str]")
-            
-            if element_num > len(colormap):
-                logger.warning(f"Number of {color} is larger then number of colors in given colormap, using black to represent remaining motifs")
-                colormap += ["#1a1a1a"] * (element_num - len(colormap))
-            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, colormap[:element_num]))
-
-        case dict():
-            if not all(isinstance(k, str) and isinstance(v, str) for k, v in colormap.items()):
-                raise TypeError("Dict colormap must be Dict[str, str]")
-
-            missing = set(all_element_list) - set(colormap.keys())
-            if missing:
-                raise KeyError(f"Missing {color} in colormap: {missing}")
-            
-            mapped_colormap: Dict[str, str] = colormap
 
     match feature:
         case "motif":
             motif_array_dict: Dict[str, List[str]] = adata.uns["motif_array"]
             orientation_array_dict: Dict[str, List[str]] = adata.uns["orientation_array"]
             for sample in sample_order:
+                # get data
                 motif_array: List[str] = motif_array_dict[sample]
                 orientation_array: List[str] = orientation_array_dict[sample]
-                color_array: List[str] = [mapped_colormap[m] for m in motif_array]
                 array_len: int = len(motif_array)
+                color_array: List[str] = [mapped_colormap[m] for m in motif_array]
+
+                # get coordinates
+                start_array: List[float] = [i for i in range(array_len)]
+                end_array: List[float] = [i + 1 for i in range(array_len)]
+                total_cn: float = adata.obs.loc[adata.obs.index == sample, "copy_number"].iloc[0]
+                end_array[-1] = start_array[-1] + total_cn - int(total_cn)
+
                 max_x: int = max(max_x, array_len)
                 track_data: pl.DataFrame = pl.DataFrame({
                     "chrom": ["seq"] * array_len,
-                    "start": [i for i in range(array_len)],
-                    "end": [i + 1 for i in range(array_len)],
+                    "start": start_array,
+                    "end": end_array,
                     "motif": motif_array,
                     "strand": orientation_array,
                     "itemRgb": color_array,
-                })
-                track_dict = {
-                    "name": sample,
-                    "type": "bed",
-                    "data": track_data,
-                }
-                track_list.append(track_dict)
-
-        case "kmer":
-            kmer_array_dict: Dict[str, List[str]] = adata.uns[f"kmer_array_k={ksize}"]
-            for sample in sample_order:
-                kmer_array: List[str] = kmer_array_dict[sample]
-                orientation_array: List[str] = ["+"] * len(kmer_array)
-                color_array: List[str] = [mapped_colormap[m] for m in kmer_array]
-                array_len: int = len(kmer_array)
-                max_x: int = max(max_x, array_len)
-                track_data: pl.DataFrame = pl.DataFrame({
-                    "chrom": ["seq"] * array_len,
-                    "start": [i for i in range(array_len)],
-                    "end": [i + 1 for i in range(array_len)],
-                    "kmer": kmer_array,
-                    "strand": orientation_array,
-                    "itemRgb": color_array,
+                }, schema={
+                    "chrom": pl.Utf8,
+                    "start": pl.Float64,
+                    "end": pl.Float64,
+                    "motif": pl.Utf8,
+                    "strand": pl.Utf8,
+                    "itemRgb": pl.Utf8,
                 })
                 track_dict = {
                     "name": sample,
@@ -1242,18 +1257,217 @@ def waterfall(
                 track_list.append(track_dict)
 
         case _:
-            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif' or 'kmer'")
+            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+
+    # auto-compute figsize to avoid crowding or excessive sparsity
+    n_tracks = len(track_list)
+
+    # get real font size: user override > vampire template > plotly default
+    import plotly.io as pio
+    if "vampire" in pio.templates:
+        vampire_template = pio.templates["vampire"]
+        _layout = getattr(vampire_template, "layout", {})
+        _font = getattr(_layout, "font", {})
+        default_font_size = getattr(_font, "size", 12)
+    else:
+        default_font_size = 12
+    font_size = kwargs.get("font", {}).get("size", default_font_size) if isinstance(kwargs.get("font"), dict) else default_font_size
+
+    # width scales with max_x and font size
+    if figsize[0] is None:
+        # each motif/kmer needs enough px to be distinguishable;
+        # larger font needs proportionally wider items
+        px_per_item = font_size * 0.35
+        # account for margins: left (max name length * 8, ~80) + right (40) + padding
+        min_margin = 120
+        width = int(max_x * px_per_item + min_margin)
+        width = max(width, 500)
+        logger.debug(f"automatically adjust figure width to {width}")
+    else:
+        width = figsize[0]
+
+    # height scales with n_tracks and font size
+    if figsize[1] is None:
+        # each track needs enough vertical space for bed rectangles and annotations;
+        # tighter than before to avoid excessive sparsity
+        min_track_height = font_size * 1.6
+        # margins in trackplot: top=40, bottom=55
+        height = int(n_tracks * min_track_height + 40 + 55)
+        height = max(height, 300)
+        logger.debug(f"automatically adjust figure height to {height}")
+    else:
+        height = figsize[1]
+
+    actual_figsize = (width, height)
 
     fig: go.Figure = trackplot(
         tracks = track_list,
         region = f"seq:0-{max_x}",
         title = "",
-        x_title = "Copy index" if feature == "motif" else "Kmer index",
-        figsize = figsize,
+        x_title = "Copy index",
+        figsize = actual_figsize,
         vertical_spacing = 0.00,
         track_name_dx = track_name_dx,
         **kwargs
     )
+    return fig
+
+def waterfall_legend(
+    adata: ad.AnnData,
+    feature: Literal["motif"] = "motif",
+    sample_order: Optional[List[str]] = None,
+    color: str = "id",
+    colormap: dict | List | str = "rainbow",
+    figsize: Tuple[Optional[int], Optional[int]] = (None, None),
+    track_name_dx: float = -0.01,
+    **kwargs
+) -> go.Figure:
+    """
+    Create a legend figure for the waterfall plot.
+
+    Displays colored squares alongside their corresponding motif sequences
+    (or color-column values) in a separate figure. The order and coloring
+    are consistent with `vp.anno.pl.waterfall()`.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        Annotated data object generated from `pp.read_anno()`.
+
+    feature : {"motif"}, default="motif"
+        Type of feature.
+
+    sample_order : list of str, optional
+        Unused in legend, kept for API consistency with `waterfall()`.
+
+    color : str, default="id"
+        Column name in `adata.var` used to assign coloring. When ``color="id"``,
+        legend labels show motif ids; otherwise labels show values from the
+        specified column.
+
+    colormap : dict | list | str
+        Color mapping specification. Must match the colormap used in the
+        corresponding `waterfall()` call for consistent coloring.
+
+    figsize : Tuple[Optional[int], Optional[int]], optional
+        Figure size as (width, height) in pixels. Default is (None, None).
+
+        - (None, None): auto-compute both dimensions from data.
+        - (w, None): fixed width, auto-compute height from element count.
+        - (None, h): fixed height, auto-compute width from label length.
+        - (w, h): use user-specified size.
+
+    track_name_dx: float, optional
+        Unused in legend, kept for API consistency with `waterfall()`.
+
+    **kwargs
+        Additional keyword arguments passed to Plotly `update_layout`.
+
+    Returns
+    -------
+    fig : go.Figure
+        Plotly figure object with colored squares and their labels.
+
+    Examples
+    --------
+    >>> vp.anno.pl.waterfall_legend(
+    ...     adata,
+    ...     color = "id",
+    ...     colormap = "rainbow",
+    ...     figsize = (300, 400),
+    ... )
+    """
+    import plotly.graph_objects as go
+
+    # build colormap (same logic as waterfall)
+    match feature:
+        case "motif":
+            mapped_colormap = _build_element_colormap(
+                adata, feature=feature, color=color, colormap=colormap
+            )
+        case _:
+            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+
+    fig = go.Figure()
+
+    n_items = len(mapped_colormap)
+    if n_items == 0:
+        return fig
+
+    max_label_len = max(len(str(k)) for k in mapped_colormap.keys())
+
+    gap_length: float = 0.1
+    y_pos_list: List[float] = []
+    for i, (element, color_val) in enumerate(mapped_colormap.items()):
+        y_pos = n_items - 1 - i - i * gap_length  # top-to-bottom order
+        y_pos_list.append(y_pos)
+
+        # colored square (no border), width=1 height=1 for 1:1 aspect
+        fig.add_trace(go.Scatter(
+            x=[0, 1, 1, 0, 0],
+            y=[y_pos, y_pos, y_pos + 1, y_pos + 1, y_pos],
+            fill="toself",
+            fillcolor=color_val,
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip",
+            mode="lines",
+        ))
+
+        # label text, left-aligned
+        fig.add_trace(go.Scatter(
+            x=[1.5],
+            y=[y_pos + 0.5],
+            text=[str(element)],
+            mode="text",
+            textposition="middle right",
+            textfont=dict(size=14),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    ymax = max(y_pos_list) + 1
+    ymin = min(y_pos_list)
+
+    # auto-compute figsize
+    if figsize[0] is None:
+        width = max(200, 60 + max_label_len * 9)
+    else:
+        width = figsize[0]
+
+    if figsize[1] is None:
+        height = max(160, n_items * 40 + 30)
+    else:
+        height = figsize[1]
+
+    fig.update_layout(
+        xaxis=dict(
+            range=[0, (ymax - ymin) / float(height) * float(width)],
+            zeroline=False,
+            showticklabels=False,
+            showline=False,
+            ticks="",
+        ),
+        yaxis=dict(
+            range=[ymin, ymax],
+            scaleanchor="x",
+            scaleratio=1,
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            showline=False,
+            ticks="",
+            #autorange="reversed",
+        ),
+        width=width,
+        height=height,
+        margin=dict(l=20, r=20, t=20, b=20),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
+
+    fig.update_layout(**kwargs)
+
     return fig
 
 def _get_kmer_array(
@@ -1796,3 +2010,274 @@ def _compute_information_content(
         ic.append(row * R)
     
     return np.array(ic)
+
+
+def heatmap(
+    adata: ad.AnnData,
+    layer: Optional[str] = None,
+    standard_scale: Optional[Literal["obs", "var"]] = None,
+    cluster_rows: bool = True,
+    cluster_cols: bool = True,
+    row_cluster_method: str = "average",
+    col_cluster_method: str = "average",
+    row_cluster_metric: str = "euclidean",
+    col_cluster_metric: str = "euclidean",
+    dendrogram_ratio: float = 0.15,
+    colorscale: str | List | None = None,
+    showticklabels: bool = True,
+    figsize: Tuple[int, int] = (800, 600),
+    **kwargs
+) -> go.Figure:
+    """
+    Plot a sample × motif abundance heatmap with hierarchical clustering
+    and dendrograms.
+
+    This function visualizes the motif abundance matrix (``adata.X``)
+    as an interactive heatmap. Rows and columns can be independently
+    clustered, with dendrograms displayed above (columns) and to the
+    left (rows) of the heatmap.
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        Annotated data object generated from ``pp.read_anno()``.
+    layer : str, optional
+        Layer in ``adata.layers`` to use. If ``None``, uses ``adata.X``.
+    standard_scale : {"obs", "var"}, optional
+        Standard scaling mode:
+
+        - ``"obs"`` — scale each row (sample) to [0, 1]
+        - ``"var"`` — scale each column (motif) to [0, 1]
+
+    cluster_rows : bool, default=True
+        Whether to hierarchically cluster rows (samples).
+    cluster_cols : bool, default=True
+        Whether to hierarchically cluster columns (motifs).
+    row_cluster_method : str, default="average"
+        Linkage method for row clustering (e.g., ``"single"``,
+        ``"complete"``, ``"average"``, ``"ward"``).
+    col_cluster_method : str, default="average"
+        Linkage method for column clustering.
+    row_cluster_metric : str, default="euclidean"
+        Distance metric for row clustering (e.g., ``"euclidean"``,
+        ``"correlation"``, ``"cityblock"``).
+    col_cluster_metric : str, default="euclidean"
+        Distance metric for column clustering.
+    dendrogram_ratio : float, default=0.15
+        Fraction of the figure allocated to dendrograms.
+    colorscale : str or list, optional
+        Plotly colorscale name (e.g., ``"Plasma"``, ``"Viridis"``,
+        ``"RdBu_r"``) or a custom list of ``[position, color]`` pairs.
+        Default is ``"Plasma"``.
+    showticklabels : bool, default=True
+        Whether to display row and column tick labels.
+    figsize : Tuple[int, int], default=(800, 600)
+        Figure size in pixels.
+    **kwargs
+        Additional keyword arguments passed to Plotly
+        ``fig.update_layout()``.
+
+    Returns
+    -------
+    go.Figure
+        A Plotly figure containing the clustered heatmap with
+        dendrograms.
+
+    Examples
+    --------
+    >>> import vampire as vp
+    >>> adata = vp.anno.pp.read_anno("results.annotation.tsv")
+    >>> fig = vp.anno.pl.heatmap(
+    ...     adata,
+    ...     cluster_rows=True,
+    ...     cluster_cols=True,
+    ...     standard_scale="obs",
+    ...     figsize=(1000, 800),
+    ... )
+    """
+    import numpy as np
+    import plotly.graph_objects as go
+    import plotly.subplots as sp
+    from scipy.cluster.hierarchy import linkage, dendrogram
+
+    # Extract data matrix
+    X = adata.X if layer is None else adata.layers[layer]
+    if hasattr(X, "toarray"):
+        X = X.toarray()
+    X = np.asarray(X, dtype=float)
+    n_rows, n_cols = X.shape
+
+    if n_rows == 0 or n_cols == 0:
+        return go.Figure()
+
+    # Standard scale
+    if standard_scale == "obs":
+        xmin = X.min(axis=1, keepdims=True)
+        xmax = X.max(axis=1, keepdims=True)
+        X = (X - xmin) / (xmax - xmin + 1e-12)
+    elif standard_scale == "var":
+        xmin = X.min(axis=0, keepdims=True)
+        xmax = X.max(axis=0, keepdims=True)
+        X = (X - xmin) / (xmax - xmin + 1e-12)
+
+    # Clustering
+    row_order = list(range(n_rows))
+    col_order = list(range(n_cols))
+    row_dendro_data = None
+    col_dendro_data = None
+
+    if cluster_rows and n_rows > 1:
+        row_linkage = linkage(X, method=row_cluster_method, metric=row_cluster_metric)
+        row_dendro_data = dendrogram(
+            row_linkage, no_plot=True, color_threshold=0,
+            above_threshold_color="#1f77b4",
+        )
+
+    if cluster_cols and n_cols > 1:
+        col_linkage = linkage(X.T, method=col_cluster_method, metric=col_cluster_metric)
+        col_dendro_data = dendrogram(
+            col_linkage, no_plot=True, color_threshold=0,
+            above_threshold_color="#1f77b4",
+        )
+
+    # Get leaf order
+    if row_dendro_data is not None:
+        row_order = row_dendro_data["leaves"]
+    if col_dendro_data is not None:
+        col_order = col_dendro_data["leaves"]
+
+    # Reorder matrix
+    X_reordered = X[np.ix_(row_order, col_order)]
+
+    # Labels
+    row_labels = [str(adata.obs.index[i]) for i in row_order]
+    col_labels = [str(adata.var.index[i]) for i in col_order]
+
+    # Create figure manually (no subplots) so dendrogram and heatmap can share
+    # axes and zoom / pan together.
+    fig = go.Figure()
+
+    # Pre-compute max distances for dendrogram axis ranges
+    row_max_dist = 1.0
+    if row_dendro_data is not None and row_dendro_data["dcoord"]:
+        row_max_dist = max(max(d) for d in row_dendro_data["dcoord"])
+    col_max_dist = 1.0
+    if col_dendro_data is not None and col_dendro_data["dcoord"]:
+        col_max_dist = max(max(d) for d in col_dendro_data["dcoord"])
+
+    # Add column dendrogram (top) — shares x-axis with heatmap
+    if col_dendro_data is not None:
+        for x_pos, y_dist in zip(col_dendro_data["icoord"], col_dendro_data["dcoord"]):
+            x_norm = [(xi - 5) / 10 for xi in x_pos]
+            fig.add_trace(go.Scatter(
+                x=x_norm, y=y_dist,
+                mode="lines",
+                line=dict(color="black", width=1),
+                showlegend=False,
+                hoverinfo="skip",
+                xaxis="x",
+                yaxis="y2",
+            ))
+
+    # Add row dendrogram (left) — shares y-axis with heatmap
+    if row_dendro_data is not None:
+        for x_dist, y_pos in zip(row_dendro_data["dcoord"], row_dendro_data["icoord"]):
+            y_norm = [(yi - 5) / 10 for yi in y_pos]
+            fig.add_trace(go.Scatter(
+                x=[row_max_dist - xi for xi in x_dist],  # flip: leaves on the right
+                y=y_norm,
+                mode="lines",
+                line=dict(color="black", width=1),
+                showlegend=False,
+                hoverinfo="skip",
+                xaxis="x2",
+                yaxis="y",
+            ))
+
+    # Add heatmap — shares x-axis with column dendrogram, y-axis with row dendrogram
+    _colorscale = colorscale if colorscale is not None else "Plasma"
+    fig.add_trace(go.Heatmap(
+        z=X_reordered,
+        x=list(range(n_cols)),
+        y=list(range(n_rows)),
+        colorscale=_colorscale,
+        showscale=True,
+        colorbar=dict(
+            orientation="h",
+            y=-0.12,
+            yanchor="top",
+            x=0.5,
+            xanchor="center",
+            thickness=15,
+            len=0.4,
+            title=dict(text="Abundance", side="bottom"),
+        ),
+        hovertemplate="Sample: %{y}<br>Motif: %{x}<br>Value: %{z:.2f}<extra></extra>",
+        xaxis="x",
+        yaxis="y",
+    ))
+
+    # Domain layout
+    # xaxis  : heatmap + column dendrogram  (right side)
+    # xaxis2 : row dendrogram               (left side)
+    # yaxis  : heatmap + row dendrogram     (bottom side)
+    # yaxis2 : column dendrogram            (top side)
+    fig.update_layout(
+        xaxis=dict(
+            domain=[dendrogram_ratio, 1],
+            range=[-0.5, n_cols - 0.5],
+            tickvals=list(range(n_cols)),
+            ticktext=col_labels if showticklabels else [],
+            tickangle=45,
+            showticklabels=showticklabels,
+            showline=False,
+            automargin=False,
+            mirror=False,
+            showgrid=False,
+            zeroline=False,
+            ticks="outside" if showticklabels else "",
+        ),
+        xaxis2=dict(
+            domain=[0, dendrogram_ratio],
+            range=[0, row_max_dist],
+            showticklabels=False,
+            showline=False,
+            automargin=False,
+            mirror=False,
+            showgrid=False,
+            zeroline=False,
+            ticks="",
+        ),
+        yaxis=dict(
+            domain=[0, 1 - dendrogram_ratio],
+            range=[-0.5, n_rows - 0.5],
+            tickvals=list(range(n_rows)),
+            ticktext=row_labels if showticklabels else [],
+            showticklabels=showticklabels,
+            side="right",
+            showline=False,
+            automargin=False,
+            mirror=False,
+            showgrid=False,
+            zeroline=False,
+            ticks="outside" if showticklabels else "",
+        ),
+        yaxis2=dict(
+            domain=[1 - dendrogram_ratio, 1],
+            range=[0, col_max_dist],
+            showticklabels=False,
+            showline=False,
+            automargin=False,
+            mirror=False,
+            showgrid=False,
+            zeroline=False,
+            ticks="",
+        ),
+        width=figsize[0],
+        height=figsize[1],
+        template="simple_white",
+        margin=dict(l=80, r=80, t=100, b=80),
+        **kwargs,
+    )
+
+    return fig

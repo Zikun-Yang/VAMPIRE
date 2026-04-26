@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 from datetime import datetime
@@ -7,6 +8,7 @@ import polars as pl
 
 # plotting
 import plotly.graph_objects as go
+import vampire as vp
 
 # custom functions
 from ._read import (
@@ -27,11 +29,11 @@ from ._plot import (
     plot_tr_distribution, 
     plot_length_period_distribution, 
     plot_entropy_distribution, 
-    plot_enriched_motifs_by_tr_number, 
+    plot_enriched_motifs_by_tr_count, 
     plot_enriched_motifs_by_copy_number
 )
 from ._table import (
-    create_largest_trs_table_by_copy_number
+    prepare_largest_trs_table_data
 )
 
 logger = logging.getLogger(__name__)
@@ -93,16 +95,18 @@ def make_stats(params: dict) -> dict:
                 "TR_DISTRIBUTION_PLOT": fig_to_html(plot_tr_distribution(df, fasta_metainfo)),
                 "LENGTH_PERIOD_DISTRIBUTION_PLOT": fig_to_html(plot_length_period_distribution(df)),
                 "ENTROPY_DISTRIBUTION_PLOT": fig_to_html(plot_entropy_distribution(df)),
-                "ENRICHED_MOTIFS_BY_TR_NUMBER_PLOT": fig_to_html(plot_enriched_motifs_by_tr_number(df)),
+                "ENRICHED_MOTIFS_BY_TR_COUNT_PLOT": fig_to_html(plot_enriched_motifs_by_tr_count(df)),
                 "ENRICHED_MOTIFS_BY_COPY_NUMBER_PLOT": fig_to_html(plot_enriched_motifs_by_copy_number(df)),
-                "LARGEST_TRS_BY_COPY_NUMBER_PLOT": fig_to_html(create_largest_trs_table_by_copy_number(df)),
+                "LARGEST_TRS_TABLE_DATA": json.dumps(prepare_largest_trs_table_data(df), ensure_ascii=False),
             }
             data.update(scan_extra)
             logger.debug(f"Made scan extra statistics")
 
         case "anno":
-            import vampire as vp
-            adata = vp.pp.read_anno(f"{params['prefix']}.annotation.tsv")
+            import anndata as ad
+            vp.anno.pl.set_default_plotstyle()
+            adata = ad.read_h5ad(f"{params['prefix']}.h5ad")
+            sample_order: List[str] = list(adata.obs.sort_values(by="copy_number").index)
             copy_number_list: List[float] = adata.obs["copy_number"]
             anno_extra = {
                 "AUTO_MODE": params["auto"],
@@ -115,7 +119,14 @@ def make_stats(params: dict) -> dict:
                 "MEAN_COPY_NUMBER": round(copy_number_list.mean(), 1),
                 "MEDIAN_COPY_NUMBER": copy_number_list.median(),
                 "MAX_COPY_NUMBER": copy_number_list.max(),
-                "WATERFALL_PLOT": "to do...",
+                "WATERFALL_PLOT": fig_to_html(
+                    vp.anno.pl.waterfall(
+                        adata,
+                        sample_order = sample_order,
+                        margin = dict(l=120),
+                        font = dict(size=8)
+                    )
+                ),
             }
             data.update(anno_extra)
             logger.debug(f"Made anno extra statistics")

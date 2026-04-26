@@ -462,6 +462,7 @@ def read_anno(
         .to_pandas()
         .set_index("id")
     )
+    var["label"] = var["label"].astype("category")
     motif_order: List[str] = var.index
     logger.debug("var dataframe is created")
 
