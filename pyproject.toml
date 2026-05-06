@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vampire-tr"
-version = "0.3.0"
+version = "0.4.0a1"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,25 +19,38 @@ maintainers = [
   {name = "Zikun Yang", email = "ericyangzk@gmail.com"}
 ]
 dependencies = [
-    "numpy",
-    "pandas",
-    "edlib",
-    "tqdm",
-    "matplotlib",
-    "seaborn",
-    "scipy",
-    "resource",
-    "pybktree",
-    "Levenshtein",
-    "Bio",
-    "rich",
-    "sourmash",
-    "networkx",
-    "scikit-learn",
-    "logomaker"
-
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "edlib>=1.3.9",
+    "tqdm>=4.66",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "scipy>=1.11",
+    "pybktree>=1.1",
+    "biopython>=1.83",
+    "sourmash>=4.8",
+    "networkx>=3.2",
+    "scikit-learn>=1.3",
+    "polars>=1.0",
+    "pysam>=0.22",
+    "pyarrow>=15.0",
+    "anndata>=0.10",
+    "plotly>=5.20",
+    "numba>=0.59",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=5.0",
+    "sphinx-design",
+    "sphinx-rtd-theme>=1.0",
+    "sphinx-autodoc-typehints>=1.0",
+    "myst_parser",
+    "myst-nb",
+    "sphinx-book-theme==1.1.4",
+    "scanpydoc==0.17.3"
+]
 
 [project.urls]
 Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"
@@ -53,5 +66,4 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vampire.resources" = ["refMotif.fa"]
-
+"vampire.resources" = ["**/*"]
