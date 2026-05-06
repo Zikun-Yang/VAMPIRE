@@ -455,7 +455,7 @@ def read_anno(
         motif_df.select([
             pl.col("id").cast(pl.Utf8),
             pl.col("motif"),
-            pl.col("motif").map_elements(lambda x: len(x)).alias("motif_length"),
+            pl.col("motif").map_elements(lambda x: len(x), return_dtype=pl.Int64).alias("motif_length"),
             pl.col("copyNumber").alias("copy_number"),
             pl.col("label"),
         ])

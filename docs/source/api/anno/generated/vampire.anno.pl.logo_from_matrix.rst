@@ -1,4 +1,4 @@
-vampire.anno.pl.logo\_from\_matrix
+﻿vampire.anno.pl.logo\_from\_matrix
 ==================================
 
 .. currentmodule:: vampire.anno.pl

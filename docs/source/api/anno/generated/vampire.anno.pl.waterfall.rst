@@ -1,4 +1,4 @@
-vampire.anno.pl.waterfall
+﻿vampire.anno.pl.waterfall
 =========================
 
 .. currentmodule:: vampire.anno.pl

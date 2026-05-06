@@ -58,7 +58,7 @@ _COLORMAP_OPTIONS: Dict[str, List[str]] = {
 
 def _build_element_colormap(
     adata: ad.AnnData,
-    feature: Literal["motif"] = "motif",
+    feature: str = "motif",
     color: str = "id",
     colormap: dict | List | str = "rainbow",
 ) -> Dict[str, str]:
@@ -69,7 +69,7 @@ def _build_element_colormap(
     ----------
     adata : ad.AnnData
         Annotated data object.
-    feature : {"motif"}, default="motif"
+    feature : str, default="motif"
         Type of feature.
     color : str, default="id"
         Column name in `adata.var` used to assign coloring.
@@ -81,19 +81,14 @@ def _build_element_colormap(
     Dict[str, str]
         Mapping from element (motif id or color column value) to color hex string.
     """
-    match feature:
-        case "motif":
-            all_id_list: List[str] = list(adata.var.index)
-            if color == "id":
-                id2element: Dict[str, Any] = {m: m for m in all_id_list}
-            else:
-                if color not in adata.var.columns:
-                    raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
-                id2element = dict(zip(adata.var.index, adata.var[color]))
-            all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
-
-        case _:
-            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+    all_id_list: List[str] = list(adata.var.index)
+    if color == "id":
+        id2element: Dict[str, Any] = {m: m for m in all_id_list}
+    else:
+        if color not in adata.var.columns:
+            raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
+        id2element = dict(zip(adata.var.index, adata.var[color]))
+    all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
 
     element_num: int = len(all_element_list)
 
@@ -179,6 +174,9 @@ def trackplot(
         - **stranded** (`bool`, optional) - Whether to show stranded arrows. Default is False
         - **arrowhead_length** (`float`, optional) - Arrowhead length compared with the region length for stranded arrows. Default is 0.03
         - **color** (`str`, optional) - color. Default is `"#212529"`
+        - **draw_baseline** (`bool`, optional) - When ``True``, draws a thin black
+          horizontal line across the full region before the rectangles, so gaps
+          appear as breaks. Default is ``False``.
 
         Additional options for `"heatmap"` tracks:
 
@@ -639,6 +637,11 @@ def _plot_bed_track(
     track : Dict
         Track configuration dictionary containing plot settings (e.g., name,
         stranded). If stranded is True, arrows are drawn; otherwise rectangles.
+
+        - **draw_baseline** (`bool`, optional) — When ``True``, a thin black
+          horizontal line is drawn across the full region *before* the
+          rectangles, so gaps (positions with no data) appear as breaks in the
+          line. Default is ``False``.
     data : pl.DataFrame
         Polars DataFrame containing bed data with columns: chrom, start, end, and
         optionally itemRgb (for colors) and strand (if stranded is True).
@@ -656,6 +659,17 @@ def _plot_bed_track(
 
     CHROM, START, END = region
     data_sorted = data.sort("start")
+
+    # Background baseline — drawn as a shape with layer="below" so it is
+    # guaranteed to sit underneath all traces regardless of trace type.
+    if track.get("draw_baseline", False):
+        fig.add_shape(
+            type="line",
+            x0=START, y0=0.5, x1=END, y1=0.5,
+            line=dict(color="black", width=2),
+            layer="below",
+            row=row, col=1,
+        )
 
     # prepare data for batch plotting
     bases = []  # x starting positions
@@ -1113,7 +1127,7 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
 """
 def waterfall(
     adata: ad.AnnData,
-    feature: Literal["motif"] = "motif",
+    feature: str = "motif",
     sample_order: Optional[List[str]] = None,
     color: str = "id",
     colormap: dict | List | str = "rainbow",
@@ -1133,10 +1147,12 @@ def waterfall(
     adata : ad.AnnData
         Annotated data object generated from `pp.read_anno()`.
 
-    feature : {"motif"}, default="motif"
-        Type of feature to visualize.
-
-        - "motif": uses precomputed motif units from decomposition
+    feature : str, default="motif"
+        Key prefix for the feature arrays stored in ``adata.uns``.
+        The function looks up ``uns[f"{feature}_array"]`` and
+        ``uns[f"{feature.replace('motif', 'orientation')}_array"]``.
+        Common values: ``"motif"`` (raw arrays), ``"aligned_motif"``
+        (alignment output from ``tl.align()``).
 
     sample_order : list of str, optional
         Ordered list of sample identifiers defining the x-axis order.
@@ -1208,56 +1224,60 @@ def waterfall(
         raise KeyError(f"Missing samples in sample_order: {missing}")
 
     # build colormap
-    match feature:
-        case "motif":
-            mapped_colormap = _build_element_colormap(
-                adata, feature=feature, color=color, colormap=colormap
-            )
-        case _:
-            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif' or 'kmer'")
+    mapped_colormap = _build_element_colormap(
+        adata, feature=feature, color=color, colormap=colormap
+    )
 
-    match feature:
-        case "motif":
-            motif_array_dict: Dict[str, List[str]] = adata.uns["motif_array"]
-            orientation_array_dict: Dict[str, List[str]] = adata.uns["orientation_array"]
-            for sample in sample_order:
-                # get data
-                motif_array: List[str] = motif_array_dict[sample]
-                orientation_array: List[str] = orientation_array_dict[sample]
-                array_len: int = len(motif_array)
-                color_array: List[str] = [mapped_colormap[m] for m in motif_array]
+    motif_array_dict: Dict[str, List[str]] = adata.uns[f"{feature}_array"]
+    orientation_array_dict: Dict[str, List[str]] = adata.uns[f"{feature.replace("motif", "orientation")}_array"]
+    for sample in sample_order:
+        # get data
+        motif_array: List[str] = motif_array_dict[sample]
+        orientation_array: List[str] = orientation_array_dict[sample]
+        array_len: int = len(motif_array)
 
-                # get coordinates
-                start_array: List[float] = [i for i in range(array_len)]
-                end_array: List[float] = [i + 1 for i in range(array_len)]
-                total_cn: float = adata.obs.loc[adata.obs.index == sample, "copy_number"].iloc[0]
-                end_array[-1] = start_array[-1] + total_cn - int(total_cn)
+        # skip gaps ("-") but keep original positions so alignment is preserved
+        start_array: List[float] = []
+        end_array: List[float] = []
+        motif_filtered: List[str] = []
+        ori_filtered: List[str] = []
+        color_filtered: List[str] = []
 
-                max_x: int = max(max_x, array_len)
-                track_data: pl.DataFrame = pl.DataFrame({
-                    "chrom": ["seq"] * array_len,
-                    "start": start_array,
-                    "end": end_array,
-                    "motif": motif_array,
-                    "strand": orientation_array,
-                    "itemRgb": color_array,
-                }, schema={
-                    "chrom": pl.Utf8,
-                    "start": pl.Float64,
-                    "end": pl.Float64,
-                    "motif": pl.Utf8,
-                    "strand": pl.Utf8,
-                    "itemRgb": pl.Utf8,
-                })
-                track_dict = {
-                    "name": sample,
-                    "type": "bed",
-                    "data": track_data,
-                }
-                track_list.append(track_dict)
+        for pos, (m, o) in enumerate(zip(motif_array, orientation_array)):
+            if m == "-":
+                continue
+            start_array.append(float(pos))
+            end_array.append(float(pos + 1))
+            motif_filtered.append(m)
+            ori_filtered.append(o)
+            color_filtered.append(mapped_colormap[m])
 
-        case _:
-            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+        if end_array:
+            total_cn: float = adata.obs.loc[adata.obs.index == sample, "copy_number"].iloc[0]
+            end_array[-1] = start_array[-1] + total_cn - int(total_cn)
+
+        max_x = max(max_x, array_len)
+        track_data: pl.DataFrame = pl.DataFrame({
+            "chrom": ["seq"] * len(motif_filtered),
+            "start": start_array,
+            "end": end_array,
+            "motif": motif_filtered,
+            "strand": ori_filtered,
+            "itemRgb": color_filtered,
+        }, schema={
+            "chrom": pl.Utf8,
+            "start": pl.Float64,
+            "end": pl.Float64,
+            "motif": pl.Utf8,
+            "strand": pl.Utf8,
+            "itemRgb": pl.Utf8,
+        })
+        track_dict = {
+            "name": sample,
+            "type": "bed",
+            "data": track_data,
+        }
+        track_list.append(track_dict)
 
     # auto-compute figsize to avoid crowding or excessive sparsity
     n_tracks = len(track_list)
@@ -1300,6 +1320,16 @@ def waterfall(
 
     actual_figsize = (width, height)
 
+    # Detect whether any sample contains gaps ("-") — only draw baselines for
+    # aligned data where gaps need to be visualised as breaks in the line.
+    has_gap = any(
+        any(m == "-" for m in motif_array_dict[s])
+        for s in sample_order
+    )
+    if has_gap:
+        for td in track_list:
+            td["draw_baseline"] = True
+
     fig: go.Figure = trackplot(
         tracks = track_list,
         region = f"seq:0-{max_x}",
@@ -1310,11 +1340,12 @@ def waterfall(
         track_name_dx = track_name_dx,
         **kwargs
     )
+
     return fig
 
 def waterfall_legend(
     adata: ad.AnnData,
-    feature: Literal["motif"] = "motif",
+    feature: str = "motif",
     sample_order: Optional[List[str]] = None,
     color: str = "id",
     colormap: dict | List | str = "rainbow",
@@ -1334,8 +1365,9 @@ def waterfall_legend(
     adata : ad.AnnData
         Annotated data object generated from `pp.read_anno()`.
 
-    feature : {"motif"}, default="motif"
-        Type of feature.
+    feature : str, default="motif"
+        Key prefix passed to `_build_element_colormap`. Must match the
+        ``feature`` argument used in the corresponding `waterfall()` call.
 
     sample_order : list of str, optional
         Unused in legend, kept for API consistency with `waterfall()`.
@@ -1380,13 +1412,9 @@ def waterfall_legend(
     import plotly.graph_objects as go
 
     # build colormap (same logic as waterfall)
-    match feature:
-        case "motif":
-            mapped_colormap = _build_element_colormap(
-                adata, feature=feature, color=color, colormap=colormap
-            )
-        case _:
-            raise ValueError(f"Invalid feature: {feature}, feature must be 'motif'")
+    mapped_colormap = _build_element_colormap(
+        adata, feature=feature, color=color, colormap=colormap
+    )
 
     fig = go.Figure()
 

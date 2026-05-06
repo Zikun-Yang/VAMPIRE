@@ -19,6 +19,7 @@ def align(
     adata: ad.AnnData,
     reference: Optional[str] = None,
     match_score: float = 2.0,
+    mismatch_score: float = 1.0,
     gap_open: float = 5.0,
     gap_extend: float = 1.0,
     refine: bool = True,
@@ -40,7 +41,10 @@ def align(
         sample with the minimum average pairwise distance to all others
         is selected automatically.
     match_score : float, default=2.0
-        Score for aligning identical motifs.
+        Penalty coefficient for aligning motifs. The substitution score is
+        ``avg_motif_length - distance * match_score - distance * mismatch_score``.
+    mismatch_score : float, default=1.0
+        Additional penalty coefficient for mismatching motifs.
     gap_open : float, default=5.0
         Penalty for opening a gap.
     gap_extend : float, default=1.0
@@ -82,7 +86,7 @@ def align(
         return adata
 
     # Build substitution matrix
-    sub_matrix = _build_sub_matrix(adata, match_score)
+    sub_matrix = _build_sub_matrix(adata, match_score, mismatch_score)
 
     # Initialize profiles: each sequence as a single-sequence profile
     profiles: Dict[int, List[List[str]]] = {
@@ -206,26 +210,28 @@ def align(
 def _build_sub_matrix(
     adata: ad.AnnData,
     match_score: float,
+    mismatch_score: float,
 ) -> np.ndarray:
-    """Build substitution matrix from motif_distance."""
+    """Build substitution matrix from motif_distance and motif_length.
+
+    Score formula::
+
+        score = (avg_motif_length - distance) * match_score - distance * mismatch_score
+
+    Positive scores reward alignment, negative scores penalise it.
+    """
     import numpy as np
 
     n_motifs = len(adata.var)
     dist_mat = adata.varp["motif_distance"]
-
-    max_dist = dist_mat.max()
-    if max_dist == 0:
-        scale = 1.0
-    else:
-        scale = match_score / max_dist
+    motif_lengths = adata.var["motif_length"].to_numpy()
 
     sub_matrix = np.zeros((n_motifs, n_motifs), dtype=float)
     for i in range(n_motifs):
         for j in range(n_motifs):
-            if i == j:
-                sub_matrix[i, j] = match_score
-            else:
-                sub_matrix[i, j] = -dist_mat[i, j] * scale
+            dist = dist_mat[i, j]
+            avg_len = (motif_lengths[i] + motif_lengths[j]) / 2.0
+            sub_matrix[i, j] = (avg_len - dist) * match_score - dist * mismatch_score
 
     return sub_matrix
 

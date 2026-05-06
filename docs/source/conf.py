@@ -26,7 +26,7 @@ def get_version_from_pyproject():
             return pyproject['project']['version']
     except (FileNotFoundError, KeyError):
         # Fallback to default version if file not found or parsing fails
-        return '0.3.0'
+        return '0.4.0'
 
 # -- Project information -----------------------------------------------------
 

@@ -186,7 +186,7 @@ class Decompose:
             max_distances: list[int] = [int(len(motif) * (1 - self.min_similarity)) for motif in motifs_rc]
             motif_rc_match_df: pl.DataFrame = find_similar_match(seq, motifs_rc, max_distances)
             motif_rc_match_df = motif_rc_match_df.with_columns(
-                pl.col("motif").map_elements(lambda x: rc(x)).alias("recovered_motif")
+                pl.col("motif").map_elements(lambda x: rc(x), return_dtype=pl.Utf8).alias("recovered_motif")
             ).with_columns(
                 pl.lit("-").alias("orientation"),
                 pl.col("recovered_motif").alias("motif")
@@ -1358,7 +1358,7 @@ def run_anno(cfg: dict[str, Any]) -> None:
 
     # get canonical motif form
     motif_catalog = motif_catalog.with_columns(
-        pl.col("motif").map_elements(canonicalize_motif_str)
+        pl.col("motif").map_elements(canonicalize_motif_str, return_dtype=pl.Utf8)
         .alias("canonical_motif")
     )
     motif_catalog_database: pl.DataFrame = motif_catalog.filter(pl.col("source") == "database")

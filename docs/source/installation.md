@@ -28,8 +28,12 @@ $ singularity exec vampire-tr_latest.sif vampire --help
 Install VAMPIRE using pip:
 
 ```console
-$ pip install vampire-tr
+$ pip install --pre vampire-tr
 ```
+
+> **Note for preview releases:** VAMPIRE `0.4.x` is currently in alpha (`0.4.0a1`).
+> You must use `--pre` so that pip installs the preview version instead of the
+> latest stable `0.3.x` release.
 :::
 
 :::{tab-item} Docker

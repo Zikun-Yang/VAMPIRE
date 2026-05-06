@@ -46,7 +46,7 @@ def get_representative_motifs(df: pl.DataFrame) -> pl.DataFrame:
         df: pl.DataFrame
     """
    
-    df = df.with_columns(pl.col("motif").map_elements(canonicalize_motif).alias("canonical_motif"))
+    df = df.with_columns(pl.col("motif").map_elements(canonicalize_motif, return_dtype=pl.Utf8).alias("canonical_motif"))
     return df
 
 def make_fasta_metainfo(fasta_filepath: str) -> dict:

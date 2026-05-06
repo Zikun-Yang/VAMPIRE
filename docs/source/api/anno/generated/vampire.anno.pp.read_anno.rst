@@ -1,4 +1,4 @@
-vampire.anno.pp.read\_anno
+﻿vampire.anno.pp.read\_anno
 ==========================
 
 .. currentmodule:: vampire.anno.pp

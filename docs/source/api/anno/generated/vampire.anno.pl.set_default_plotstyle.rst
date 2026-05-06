@@ -1,4 +1,4 @@
-vampire.anno.pl.set\_default\_plotstyle
+﻿vampire.anno.pl.set\_default\_plotstyle
 =======================================
 
 .. currentmodule:: vampire.anno.pl

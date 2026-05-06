@@ -1696,7 +1696,7 @@ def annotate_regions(task: tuple[str, str, str, int, float]) -> str:
                 # memory limit for DP matrices per segment (backward pass dominant)
                 # backward pass allocates: M/I/D (int32) + trace_M/I/D (int8) + score_array + band_argmax_j
                 # total ≈ 15 * seg_len * motif_len bytes
-                MAX_MATRIX_BYTES: int = 2 * 1024 * 1024 * 1024
+                MAX_MATRIX_BYTES: int = 3 * 1024 * 1024 * 1024 # here is about 3GB for each thread
 
                 if not rgn_dict["motifs"]:
                     continue

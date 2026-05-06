@@ -3,40 +3,45 @@ From: ubuntu:22.04
 
 %labels
     Author Zikun-Yang
-    Version v0.3
+    Version v0.4.0a1
+
+%help
+    VAMPIRE - tandem repeat motif annotation tool
+
+    Build options:
+      Default (international users):
+        apptainer build vampire.sif vampire.def
+
+      Chinese users (use Tsinghua mirrors for conda + pip):
+        export SINGULARITYENV_CONDA_MIRROR=cn
+        apptainer build vampire.sif vampire.def
+        # or with apptainer build args:
+        # apptainer build --build-arg CONDA_MIRROR=cn vampire.sif vampire.def
 
 %post
+    set -e
 
+    # System packages required for building Python scientific stack
     apt-get update && apt-get install -y \
+        ca-certificates \
+        wget \
+        curl \
+        bzip2 \
+        gfortran \
+        libblas-dev \
+        liblapack-dev \
         libcurl4-openssl-dev \
         libssl-dev \
         libxml2-dev \
-        libharfbuzz-dev \
-        libfribidi-dev \
         libfontconfig1-dev \
         libfreetype6-dev \
         libpng-dev \
         libtiff5-dev \
         libjpeg-dev \
-        libudunits2-dev \
-        libgdal-dev \
-        libgeos-dev \
-        libproj-dev \
-        libblas-dev \
-        liblapack-dev \
-        gfortran \
         locales
 
-    apt-get install -y locales
     locale-gen en_US.UTF-8
     update-locale LANG=en_US.UTF-8
-
-    # Install system Python 3 and pip
-    apt-get update && apt-get install -y \
-        python3 python3-pip wget curl bzip2
-
-    # Ensure pip3 is available
-    python3 -m pip install --upgrade pip
 
     # Install Miniconda
     wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
@@ -44,60 +49,44 @@ From: ubuntu:22.04
     rm /tmp/miniconda.sh
     export PATH="/opt/conda/bin:$PATH"
 
-    # Set up Conda environment
-    /opt/conda/bin/conda init
+    # Configure conda + pip channels with optional mirror support
+    # Set CONDA_MIRROR=cn before building to use Tsinghua (TUNA) mirrors.
+    if [ "${CONDA_MIRROR:-}" = "cn" ]; then
+        echo "==> Configuring Tsinghua (TUNA) mirrors for Chinese network"
+        TUNA="https://mirrors.tuna.tsinghua.edu.cn/anaconda"
+        /opt/conda/bin/conda config --remove-key channels || true
+        /opt/conda/bin/conda config --add channels "${TUNA}/cloud/bioconda/"
+        /opt/conda/bin/conda config --add channels "${TUNA}/cloud/conda-forge/"
+        /opt/conda/bin/conda config --add channels "${TUNA}/pkgs/main/"
+        /opt/conda/bin/conda config --set show_channel_urls yes
+        /opt/conda/bin/pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+        /opt/conda/bin/pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+    else
+        echo "==> Configuring official conda channels (international)"
+        /opt/conda/bin/conda config --add channels conda-forge
+        /opt/conda/bin/conda config --add channels bioconda
+        /opt/conda/bin/conda config --set show_channel_urls yes
+    fi
+
+    /opt/conda/bin/conda init bash
     /opt/conda/bin/conda clean -afy
 
-    # Install conda compilers for R package builds
-    /opt/conda/bin/conda install -y -c conda-forge \
-        compilers \
-        gxx_linux-64 \
-        gcc_linux-64 \
-        gfortran_linux-64
+    # Install bioinformatics dependencies
+    /opt/conda/bin/conda install -y mafft
 
-
-    # Install dependencies
-    /opt/conda/bin/conda install bioconda::mafft
-    /opt/conda/bin/conda install -y -c conda-forge r-base=4.4.2
-
-    # Install R packages
-    /opt/conda/bin/Rscript -e "install.packages(c(
-        'sf', 'blob', 'vctrs', 'bit64', 'hms'
-        ), repos='https://cloud.r-project.org')"
-
-    /opt/conda/bin/Rscript -e "install.packages(c(
-        'Matrix',
-        'MASS'
-    ), repos='https://cloud.r-project.org')"
-
-    /opt/conda/bin/Rscript -e "install.packages(c(
-        'mgcv',
-        'ggplot2',
-        'dplyr',
-        'scales',
-        'data.table',
-        'cowplot',
-        'glue',
-        'patchwork',
-        'argparse',
-        'RColorBrewer',
-        'parallel'  # part of base R, but listed for clarity
-    ), repos='https://cloud.r-project.org')"
-
-    # Install VAMPIRE tool
-    pip3 install --root-user-action=ignore vampire-tr
+    # Install VAMPIRE (preview release; --pre is required for 0.4.x alphas)
+    /opt/conda/bin/pip install --root-user-action=ignore --pre vampire-tr
 
     # Clean up
     /opt/conda/bin/conda clean -afy
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 %environment
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
-    # Add conda to PATH
-    export PATH=/opt/conda/bin:$PATH
-    export PATH=/usr/local/bin:$PATH
+    export PATH=/opt/conda/bin:/usr/local/bin:$PATH
     export PYTHONUNBUFFERED=1
 
 %runscript
-    echo "This is VAMPIRE"
+    echo "VAMPIRE v0.4.0a1 (preview) - tandem repeat motif annotation"
     exec "$@"

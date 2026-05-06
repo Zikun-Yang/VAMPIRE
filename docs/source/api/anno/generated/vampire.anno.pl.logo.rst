@@ -1,4 +1,4 @@
-vampire.anno.pl.logo
+﻿vampire.anno.pl.logo
 ====================
 
 .. currentmodule:: vampire.anno.pl

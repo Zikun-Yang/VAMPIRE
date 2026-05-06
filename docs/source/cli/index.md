@@ -1,6 +1,6 @@
-# CLI
+# CLI Reference
 
-Welcome to contribute to VAMPIRE! This section of the docs provides some guidelines and tips to follow when contributing.
+This section documents the command-line interface (CLI) subcommands provided by VAMPIRE.
 
 ```{toctree}
 :hidden: true
@@ -10,4 +10,7 @@ scan
 integrate
 anno
 generator
+evaluate
+refine
+identity
 ```
