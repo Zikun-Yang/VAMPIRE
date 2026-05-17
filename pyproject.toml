@@ -37,6 +37,8 @@ dependencies = [
     "anndata>=0.10",
     "plotly>=5.20",
     "numba>=0.59",
+    "leidenalg>=0.11",
+    "igraph>=1.0",
 ]
 requires-python = ">=3.10,<3.13"
 
@@ -50,6 +52,11 @@ docs = [
     "myst-nb",
     "sphinx-book-theme==1.1.4",
     "scanpydoc==0.17.3"
+]
+dev = [
+    "pytest",
+    "ruff",
+    "build",
 ]
 
 [project.urls]
@@ -67,3 +74,33 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "vampire.resources" = ["**/*"]
+"vampire.datasets" = ["data/*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 200
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+    "D107", # Missing docstring in __init__
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.isort]
+known-first-party = ["vampire"]

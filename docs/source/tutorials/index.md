@@ -1,17 +1,9 @@
 # Tutorials
 
-## Basic annotation workflows
+## Basic tutorials
 
 ```{toctree}
 :maxdepth: 2
 
-annotation/index
-```
-
-## Basic analysis workflows
-
-```{toctree}
-:maxdepth: 2
-
-analysis/index
+basic/index
 ```
