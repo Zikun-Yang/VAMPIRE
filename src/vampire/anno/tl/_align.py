@@ -12,16 +12,16 @@ logger = logging.getLogger(__name__)
 
 """
 #
-# DNA logo function
+# motif array aligning function
 #
 """
 def align(
     adata: ad.AnnData,
     reference: Optional[str] = None,
-    match_score: float = 2.0,
-    mismatch_score: float = 1.0,
-    gap_open: float = 5.0,
-    gap_extend: float = 1.0,
+    match_score: int = 2,
+    mismatch_penalty: int = -3,
+    gap_open_penalty: int = -5,
+    gap_extend_penalty: int = -1,
     refine: bool = True,
     store_key: str = "aligned",
 ) -> ad.AnnData:
@@ -40,14 +40,14 @@ def align(
         Sample name to use as the initial reference. If ``None``, the
         sample with the minimum average pairwise distance to all others
         is selected automatically.
-    match_score : float, default=2.0
+    match_score : int, default=2
         Penalty coefficient for aligning motifs. The substitution score is
-        ``avg_motif_length - distance * match_score - distance * mismatch_score``.
-    mismatch_score : float, default=1.0
-        Additional penalty coefficient for mismatching motifs.
-    gap_open : float, default=5.0
+        ``avg_motif_length - distance * match_score - distance * mismatch_penalty``.
+    mismatch_penalty : int, default=-3
+        Additional penalty coefficient for mismatched bases.
+    gap_open_penalty : int, default=-5
         Penalty for opening a gap.
-    gap_extend : float, default=1.0
+    gap_extend_penalty : int, default=-1
         Penalty for extending a gap.
     refine : bool, default=True
         Whether to perform one round of consensus-based refinement
@@ -66,12 +66,21 @@ def align(
     --------
     >>> import vampire as vp
     >>> adata = vp.anno.pp.read_anno("results.annotation.tsv")
-    >>> adata = vp.anno.tl.align(adata, match_score=2.0, gap_open=5.0)
+    >>> adata = vp.anno.tl.align(adata)
     >>> adata.uns["aligned_motif_array"]["sample1"]
     ['0', '1', '-', '3', '2']
     """
     import numpy as np
     from copy import deepcopy
+
+    if match_score <= 0:
+        raise ValueError("match_score should be positive.")
+    if mismatch_penalty >= 0:
+        raise ValueError("mismatch_penalty should be negative.")
+    if gap_open_penalty >= 0:
+        raise ValueError("gap_open_penalty should be negative.")
+    if gap_extend_penalty >= 0:
+        raise ValueError("gap_extend_penalty should be negative.")
 
     sequences: Dict[str, List[str]] = adata.uns["motif_array"]
     orientations: Dict[str, List[str]] = adata.uns["orientation_array"]
@@ -86,7 +95,7 @@ def align(
         return adata
 
     # Build substitution matrix
-    sub_matrix = _build_sub_matrix(adata, match_score, mismatch_score)
+    sub_matrix = _build_sub_matrix(adata, match_score, mismatch_penalty)
 
     # Initialize profiles: each sequence as a single-sequence profile
     profiles: Dict[int, List[List[str]]] = {
@@ -103,7 +112,7 @@ def align(
     dist_mat = np.zeros((2 * n, 2 * n), dtype=float)
     for i in range(n):
         for j in range(i + 1, n):
-            score = _nw_score(sequences[names[i]], sequences[names[j]], sub_matrix, gap_open, gap_extend)
+            score = _nw_score(sequences[names[i]], sequences[names[j]], sub_matrix, gap_open_penalty, gap_extend_penalty)
             dist_mat[i, j] = dist_mat[j, i] = -score
 
     # Greedy progressive merge
@@ -129,7 +138,7 @@ def align(
         cons_j = _profile_consensus(profiles[j])
 
         # Align consensus sequences
-        aligned_i, aligned_j = _nw(cons_i, cons_j, sub_matrix, gap_open, gap_extend)
+        aligned_i, aligned_j = _nw(cons_i, cons_j, sub_matrix, gap_open_penalty, gap_extend_penalty)
 
         # Merge profiles
         merged = _merge_profiles(profiles[i], profiles[j], aligned_i, aligned_j)
@@ -144,7 +153,7 @@ def align(
             if k != i and k != j:
                 cons_k = _profile_consensus(profiles[k])
                 cons_new = _profile_consensus(merged)
-                score = _nw_score(cons_new, cons_k, sub_matrix, gap_open, gap_extend)
+                score = _nw_score(cons_new, cons_k, sub_matrix, gap_open_penalty, gap_extend_penalty)
                 dist_mat[next_id, k] = dist_mat[k, next_id] = -score
 
         active.remove(i)
@@ -176,7 +185,7 @@ def align(
 
         for name in names:
             aligned_seq, aligned_cons = _nw(
-                sequences[name], consensus, sub_matrix, gap_open, gap_extend
+                sequences[name], consensus, sub_matrix, gap_open_penalty, gap_extend_penalty
             )
             refined_motifs[name] = aligned_seq
             # Align orientation: follow motif positions, insert '-' where motif has gap
@@ -209,14 +218,14 @@ def align(
 
 def _build_sub_matrix(
     adata: ad.AnnData,
-    match_score: float,
-    mismatch_score: float,
+    match_score: int,
+    mismatch_penalty: int,
 ) -> np.ndarray:
     """Build substitution matrix from motif_distance and motif_length.
 
     Score formula::
 
-        score = (avg_motif_length - distance) * match_score - distance * mismatch_score
+        score = (avg_motif_length - distance) * match_score + distance * mismatch_penalty
 
     Positive scores reward alignment, negative scores penalise it.
     """
@@ -226,12 +235,12 @@ def _build_sub_matrix(
     dist_mat = adata.varp["motif_distance"]
     motif_lengths = adata.var["motif_length"].to_numpy()
 
-    sub_matrix = np.zeros((n_motifs, n_motifs), dtype=float)
+    sub_matrix = np.zeros((n_motifs, n_motifs), dtype=int)
     for i in range(n_motifs):
         for j in range(n_motifs):
             dist = dist_mat[i, j]
             avg_len = (motif_lengths[i] + motif_lengths[j]) / 2.0
-            sub_matrix[i, j] = (avg_len - dist) * match_score - dist * mismatch_score
+            sub_matrix[i, j] = int(round((avg_len - dist) * match_score + dist * mismatch_penalty))
 
     return sub_matrix
 
@@ -240,31 +249,34 @@ def _nw_score(
     seq_a: List[str],
     seq_b: List[str],
     sub_matrix: np.ndarray,
-    gap_open: float,
-    gap_extend: float,
+    gap_open_penalty: int,
+    gap_extend_penalty: int,
 ) -> float:
     """Needleman-Wunsch optimal alignment score (affine gap)."""
     import numpy as np
 
     n = len(seq_a)
     m = len(seq_b)
+    NEG_INF = -10 ** 9
+    go = int(gap_open_penalty)
+    ge = int(gap_extend_penalty)
 
-    M = np.zeros((n + 1, m + 1), dtype=float)
-    I = np.full((n + 1, m + 1), float("-inf"), dtype=float)
-    D = np.full((n + 1, m + 1), float("-inf"), dtype=float)
+    M = np.zeros((n + 1, m + 1), dtype=int)
+    I = np.full((n + 1, m + 1), NEG_INF, dtype=int)
+    D = np.full((n + 1, m + 1), NEG_INF, dtype=int)
 
     for i in range(1, n + 1):
-        I[i, 0] = gap_open + (i - 1) * gap_extend
+        I[i, 0] = go + (i - 1) * ge
 
     for j in range(1, m + 1):
-        D[0, j] = gap_open + (j - 1) * gap_extend
+        D[0, j] = go + (j - 1) * ge
 
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             score = sub_matrix[int(seq_a[i - 1]), int(seq_b[j - 1])]
             M[i, j] = max(M[i - 1, j - 1], I[i - 1, j - 1], D[i - 1, j - 1]) + score
-            I[i, j] = max(M[i - 1, j] + gap_open, I[i - 1, j] + gap_extend)
-            D[i, j] = max(M[i, j - 1] + gap_open, D[i, j - 1] + gap_extend)
+            I[i, j] = max(M[i - 1, j] + go, I[i - 1, j] + ge)
+            D[i, j] = max(M[i, j - 1] + go, D[i, j - 1] + ge)
 
     return float(max(M[n, m], I[n, m], D[n, m]))
 
@@ -273,31 +285,34 @@ def _nw(
     seq_a: List[str],
     seq_b: List[str],
     sub_matrix: np.ndarray,
-    gap_open: float,
-    gap_extend: float,
+    gap_open_penalty: int,
+    gap_extend_penalty: int,
 ) -> Tuple[List[str], List[str]]:
     """Needleman-Wunsch global alignment with affine gap penalty."""
     import numpy as np
 
     n = len(seq_a)
     m = len(seq_b)
+    NEG_INF = -10 ** 9
+    go = int(gap_open_penalty)
+    ge = int(gap_extend_penalty)
 
-    M = np.zeros((n + 1, m + 1), dtype=float)
-    I = np.full((n + 1, m + 1), float("-inf"), dtype=float)
-    D = np.full((n + 1, m + 1), float("-inf"), dtype=float)
+    M = np.zeros((n + 1, m + 1), dtype=int)
+    I = np.full((n + 1, m + 1), NEG_INF, dtype=int)
+    D = np.full((n + 1, m + 1), NEG_INF, dtype=int)
 
     for i in range(1, n + 1):
-        I[i, 0] = gap_open + (i - 1) * gap_extend
+        I[i, 0] = go + (i - 1) * ge
 
     for j in range(1, m + 1):
-        D[0, j] = gap_open + (j - 1) * gap_extend
+        D[0, j] = go + (j - 1) * ge
 
     for i in range(1, n + 1):
         for j in range(1, m + 1):
             score = sub_matrix[int(seq_a[i - 1]), int(seq_b[j - 1])]
             M[i, j] = max(M[i - 1, j - 1], I[i - 1, j - 1], D[i - 1, j - 1]) + score
-            I[i, j] = max(M[i - 1, j] + gap_open, I[i - 1, j] + gap_extend)
-            D[i, j] = max(M[i, j - 1] + gap_open, D[i, j - 1] + gap_extend)
+            I[i, j] = max(M[i - 1, j] + go, I[i - 1, j] + ge)
+            D[i, j] = max(M[i, j - 1] + go, D[i, j - 1] + ge)
 
     # Traceback
     aligned_a: List[str] = []
@@ -313,14 +328,24 @@ def _nw(
         curr = "D"
 
     while i > 0 or j > 0:
+        # Boundary protection: force correct path at edges
+        if i > 0 and j > 0:
+            pass
+        elif i > 0:
+            curr = "I"
+        elif j > 0:
+            curr = "D"
+        else:
+            break
+
         if curr == "M":
             aligned_a.append(seq_a[i - 1])
             aligned_b.append(seq_b[j - 1])
             score = sub_matrix[int(seq_a[i - 1]), int(seq_b[j - 1])]
             prev_val = M[i, j] - score
-            if i > 0 and j > 0 and abs(M[i - 1, j - 1] - prev_val) < 1e-9:
+            if i > 0 and j > 0 and M[i - 1, j - 1] == prev_val:
                 curr = "M"
-            elif i > 0 and j > 0 and abs(I[i - 1, j - 1] - prev_val) < 1e-9:
+            elif i > 0 and j > 0 and I[i - 1, j - 1] == prev_val:
                 curr = "I"
             else:
                 curr = "D"
@@ -329,7 +354,7 @@ def _nw(
         elif curr == "I":
             aligned_a.append(seq_a[i - 1])
             aligned_b.append("-")
-            if i > 0 and abs(M[i - 1, j] + gap_open - I[i, j]) < 1e-9:
+            if i > 0 and M[i - 1, j] + go == I[i, j]:
                 curr = "M"
             else:
                 curr = "I"
@@ -337,7 +362,7 @@ def _nw(
         else:  # "D"
             aligned_a.append("-")
             aligned_b.append(seq_b[j - 1])
-            if j > 0 and abs(M[i, j - 1] + gap_open - D[i, j]) < 1e-9:
+            if j > 0 and M[i, j - 1] + go == D[i, j]:
                 curr = "M"
             else:
                 curr = "D"
@@ -397,187 +422,3 @@ def _merge_profiles(
                 idx_b += 1
 
     return merged
-
-
-
-
-def _compute_aligned_distance(
-    aligned_motifs: Dict[str, List[str]],
-    names: List[str],
-    motif_distance: np.ndarray,
-    gap_penalty: float,
-) -> np.ndarray:
-    """Compute pairwise distance matrix from aligned motif arrays."""
-    import numpy as np
-
-    n = len(names)
-    dist_mat = np.zeros((n, n), dtype=float)
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            seq_i = aligned_motifs[names[i]]
-            seq_j = aligned_motifs[names[j]]
-            total_dist = 0.0
-            valid = 0
-
-            for a, b in zip(seq_i, seq_j):
-                if a == "-" and b == "-":
-                    continue  # 双 gap 不计入
-                valid += 1
-                if a == "-" or b == "-":
-                    total_dist += gap_penalty
-                elif a != b:
-                    total_dist += motif_distance[int(a), int(b)]
-                # else: same motif, dist = 0
-
-            if valid > 0:
-                dist_mat[i, j] = dist_mat[j, i] = total_dist / valid
-            else:
-                dist_mat[i, j] = dist_mat[j, i] = 0.0
-
-    return dist_mat
-
-
-def _build_haplotype_consensus(
-    aligned_motifs: Dict[str, List[str]],
-    labels: np.ndarray,
-    names: List[str],
-) -> Dict[str, List[str]]:
-    """Build consensus sequence for each haplotype cluster."""
-    from collections import Counter
-
-    consensus = {}
-    unique_labels = sorted(set(labels))
-
-    for h in unique_labels:
-        samples_in_h = [names[i] for i in range(len(names)) if labels[i] == h]
-        if not samples_in_h:
-            continue
-
-        # Get aligned length from first sample
-        seq_len = len(aligned_motifs[samples_in_h[0]])
-        h_consensus = []
-
-        for pos in range(seq_len):
-            motifs = [
-                aligned_motifs[s][pos]
-                for s in samples_in_h
-                if aligned_motifs[s][pos] != "-"
-            ]
-            if motifs:
-                h_consensus.append(Counter(motifs).most_common(1)[0][0])
-            else:
-                h_consensus.append("-")
-
-        consensus[f"H{h}"] = h_consensus
-
-    return consensus
-
-
-def haplotype(
-    adata: ad.AnnData,
-    aligned_key: str = "aligned",
-    n_clusters: int = 3,
-    gap_penalty: Optional[float] = None,
-    linkage_method: str = "average",
-    store_key: str = "haplotype",
-) -> ad.AnnData:
-    """
-    Cluster samples into haplotypes based on aligned motif arrays.
-
-    Computes a pairwise distance matrix from the aligned motif arrays,
-    then performs hierarchical clustering to group samples into
-    haplotypes. A consensus sequence is built for each haplotype.
-
-    Parameters
-    ----------
-    adata : ad.AnnData
-        Annotated data with aligned motif arrays (from ``tl.align()``).
-    aligned_key : str, default="aligned"
-        Key prefix for aligned arrays in ``adata.uns``.
-        Expects ``{aligned_key}_motif_array``.
-    n_clusters : int, default=3
-        Number of haplotype clusters.
-    gap_penalty : float, optional
-        Distance penalty for motif-vs-gap positions. Default is
-        ``max_motif_distance * 0.3``, giving a mild penalty that
-        tolerates copy-number variation without dominating the distance.
-    linkage_method : str, default="average"
-        Linkage method for hierarchical clustering
-        (e.g. ``"single"``, ``"complete"``, ``"average"``, ``"ward"``).
-    store_key : str, default="haplotype"
-        Key prefix for storing results in ``adata.uns`` and ``adata.obs``.
-
-    Returns
-    -------
-    ad.AnnData
-        Updated AnnData with haplotype labels in ``obs``:
-
-        - ``obs[f"{store_key}"]`` — haplotype label (e.g. "H1", "H2")
-        - ``uns[f"{store_key}_consensus"]`` — consensus per haplotype
-        - ``uns[f"{store_key}_linkage"]`` — linkage matrix for dendrogram
-        - ``uns[f"{store_key}_distance"]`` — sample distance matrix
-
-    Examples
-    --------
-    >>> import vampire as vp
-    >>> adata = vp.anno.pp.read_anno("results.annotation.tsv")
-    >>> adata = vp.anno.tl.align(adata)
-    >>> adata = vp.anno.tl.haplotype(adata, n_clusters=3)
-    >>> adata.obs["haplotype"]
-    sample1    H1
-    sample2    H1
-    sample3    H2
-    Name: haplotype, dtype: category
-    """
-    import numpy as np
-    from scipy.cluster.hierarchy import linkage, fcluster
-    from scipy.spatial.distance import squareform
-
-    aligned_motifs: Dict[str, List[str]] = adata.uns.get(f"{aligned_key}_motif_array")
-    if aligned_motifs is None:
-        raise KeyError(
-            f"aligned motif array not found at uns['{aligned_key}_motif_array']. "
-            f"Run tl.align() first."
-        )
-
-    names: List[str] = list(aligned_motifs.keys())
-    n = len(names)
-
-    if n == 0:
-        return adata
-    if n == 1:
-        adata.obs[store_key] = "H1"
-        adata.uns[f"{store_key}_consensus"] = {"H1": aligned_motifs[names[0]]}
-        return adata
-
-    # Default gap penalty: mild, tolerates CNV
-    if gap_penalty is None:
-        max_dist = float(adata.varp["motif_distance"].max())
-        gap_penalty = max_dist * 0.3 if max_dist > 0 else 1.0
-
-    # Compute distance matrix
-    dist_mat = _compute_aligned_distance(
-        aligned_motifs, names, adata.varp["motif_distance"], gap_penalty
-    )
-
-    # Hierarchical clustering
-    Z = linkage(squareform(dist_mat), method=linkage_method)
-    labels = fcluster(Z, t=n_clusters, criterion="maxclust")
-
-    # Build consensus for each haplotype
-    haplo_consensus = _build_haplotype_consensus(aligned_motifs, labels, names)
-
-    # Store results
-    adata.obs[store_key] = [f"H{int(l)}" for l in labels]
-    adata.obs[store_key] = adata.obs[store_key].astype("category")
-    adata.uns[f"{store_key}_consensus"] = haplo_consensus
-    adata.uns[f"{store_key}_linkage"] = Z
-    adata.uns[f"{store_key}_distance"] = dist_mat
-
-    logger.info(
-        f"Clustered {n} samples into {n_clusters} haplotypes. "
-        f"Cluster sizes: {dict(adata.obs[store_key].value_counts().sort_index())}"
-    )
-
-    return adata

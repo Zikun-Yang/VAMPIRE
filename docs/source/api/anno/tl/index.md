@@ -1,4 +1,4 @@
-# anno tools `tl`
+# anno tools `anno.tl`
 
 ```{eval-rst}
 .. module:: vampire.anno.tl
@@ -8,7 +8,7 @@
 .. currentmodule:: vampire.anno.tl
 ```
 
-## alignment
+## Alignment
 
 ```{eval-rst}
 .. autosummary::
@@ -18,12 +18,23 @@
    align
 ```
 
-## haplotype clustering
+## Motif Abundance
 
 ```{eval-rst}
 .. autosummary::
    :nosignatures:
    :toctree: ../generated/
 
-   haplotype
+   motif_abundance_pca
+```
+
+## Haplotype Calling
+
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
+   haplotype_neighbor
+   haplotype_leiden
 ```

@@ -2,21 +2,26 @@ import plotly.io as pio
 import plotly.graph_objects as go
 
 def set_default_plotstyle(
-    font_size=14,
-    font_family="Arial",
-    width=900,
-    height=400,
-    showgrid=False
+    font_size: int = 14,
+    font_family: str = "Arial",
+    line_width: float = 1.5,
+    width: int = 900,
+    height: int = 400,
+    showgrid: bool = False
 ):
     """
     Set the plotly template for the vampire package.
-    Input:
+
+    Parameters
+    ----------
         font_size: int, the font size
         font_family: str, the font family
         width: int, the width of the plot
         height: int, the height of the plot
         showgrid: bool, whether to show the grid
-    Output:
+    
+    Returns
+    -------
         None
     """
     
@@ -33,19 +38,23 @@ def set_default_plotstyle(
             xaxis=dict(
                 showgrid=showgrid,
                 zeroline=False,
+                linewidth=line_width,
+                tickwidth=line_width,
                 linecolor="black",
                 ticks="outside",
             ),
             yaxis=dict(
                 showgrid=showgrid,
                 zeroline=False,
+                linewidth=line_width,
+                tickwidth=line_width,
                 linecolor="black",
                 ticks="outside",
             ),
             legend=dict(
                 borderwidth=0,
             ),
-            margin=dict(l=40, r=40, t=40, b=40),
+            margin=dict(l=80, r=80, t=80, b=80),
         )
     )
 
