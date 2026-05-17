@@ -5,6 +5,7 @@
 :maxdepth: 2
 
 anno/pp/index
-anno/pl/index
 anno/tl/index
+anno/pl/index
+datasets/index
 ```
