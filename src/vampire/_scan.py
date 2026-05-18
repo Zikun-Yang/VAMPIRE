@@ -3095,7 +3095,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
         raise ValueError(msg)
 
     START_TIME: float = time.time()
-    logger.info(f"{cfg["threads"]} cores are used")
+    logger.info(f"{cfg['threads']} cores are used")
 
     # read input fasta file
     fasta: Iterator[SeqRecord] = read_fasta(cfg["input"])

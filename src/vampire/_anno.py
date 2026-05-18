@@ -479,7 +479,7 @@ def polish_motif(
         is_cut: bool = False
         if is_matched:
             logger.debug(f"Trying cut concatemer ...")
-            cut_units, is_cut = _try_cut( # TODO TODO TODO
+            cut_units, is_cut = _try_cut(
                 motif = canonical_form, 
                 basic_unit = best_ref, 
                 min_similarity = 0.8,
