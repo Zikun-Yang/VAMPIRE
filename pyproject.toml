@@ -28,6 +28,7 @@ dependencies = [
     "scipy>=1.11",
     "pybktree>=1.1",
     "biopython>=1.83",
+    "screed==1.1.2",
     "sourmash==4.8.6",
     "networkx>=3.2",
     "scikit-learn>=1.3",
