@@ -60,11 +60,6 @@ dev = [
     "ruff",
     "build",
 ]
-dev = [
-    "pytest",
-    "ruff",
-    "build",
-]
 
 [project.urls]
 Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"
