@@ -51,7 +51,8 @@ docs = [
     "myst_parser",
     "myst-nb",
     "sphinx-book-theme==1.1.4",
-    "scanpydoc==0.17.3"
+    "scanpydoc==0.17.3",
+    "sphinxcontrib-bibtex>=2.5",
 ]
 dev = [
     "pytest",

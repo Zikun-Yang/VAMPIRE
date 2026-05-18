@@ -49,6 +49,7 @@ extensions = [
     "sphinx_autodoc_typehints",  # needs to be after napoleon
     "myst_nb",
     "sphinx_design",
+    "sphinxcontrib.bibtex",
 ]
 
 # -- Options for myst-nb (Jupyter Notebook support) --------------------------
@@ -91,6 +92,9 @@ myst_enable_extensions = [
 
 templates_path = ['_templates']
 exclude_patterns = []
+
+bibtex_bibfiles = ["references.bib"]
+suppress_warnings = ["misc.copy_overwrite"]
 
 # -- Options for autosummary -------------------------------------------------
 autosummary_generate = True
