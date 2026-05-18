@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import List, Dict, Tuple, Optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 """
 def align(
     adata: ad.AnnData,
-    reference: Optional[str] = None,
+    reference: str | None = None,
     match_score: int = 2,
     mismatch_penalty: int = -3,
     gap_open_penalty: int = -5,
@@ -36,7 +35,7 @@ def align(
     adata : ad.AnnData
         Annotated data with ``motif_array`` and ``orientation_array`` in
         ``uns``, and ``motif_distance`` in ``varp``.
-    reference : str, optional
+    reference : str | None, optional
         Sample name to use as the initial reference. If ``None``, the
         sample with the minimum average pairwise distance to all others
         is selected automatically.
@@ -82,9 +81,9 @@ def align(
     if gap_extend_penalty >= 0:
         raise ValueError("gap_extend_penalty should be negative.")
 
-    sequences: Dict[str, List[str]] = adata.uns["motif_array"]
-    orientations: Dict[str, List[str]] = adata.uns["orientation_array"]
-    names: List[str] = list(sequences.keys())
+    sequences: dict[str, list[str]] = adata.uns["motif_array"]
+    orientations: dict[str, list[str]] = adata.uns["orientation_array"]
+    names: list[str] = list(sequences.keys())
     n: int = len(names)
 
     if n == 0:
@@ -98,15 +97,15 @@ def align(
     sub_matrix = _build_sub_matrix(adata, match_score, mismatch_penalty)
 
     # Initialize profiles: each sequence as a single-sequence profile
-    profiles: Dict[int, List[List[str]]] = {
+    profiles: dict[int, list[list[str]]] = {
         i: [[sequences[names[i]][k]] for k in range(len(sequences[names[i]]))]
         for i in range(n)
     }
-    ori_profiles: Dict[int, List[List[str]]] = {
+    ori_profiles: dict[int, list[list[str]]] = {
         i: [[orientations[names[i]][k]] for k in range(len(orientations[names[i]]))]
         for i in range(n)
     }
-    seq_indices: Dict[int, List[int]] = {i: [i] for i in range(n)}
+    seq_indices: dict[int, list[int]] = {i: [i] for i in range(n)}
 
     # Compute pairwise distances
     dist_mat = np.zeros((2 * n, 2 * n), dtype=float)
@@ -121,7 +120,7 @@ def align(
 
     while len(active) > 1:
         min_dist = float("inf")
-        pair: Optional[Tuple[int, int]] = None
+        pair: tuple[int, int] | None = None
         for i in active:
             for j in active:
                 if i < j and dist_mat[i, j] < min_dist:
@@ -168,8 +167,8 @@ def align(
     final_indices = seq_indices[final_id]
 
     # Build aligned arrays
-    aligned_motifs: Dict[str, List[str]] = {}
-    aligned_oris: Dict[str, List[str]] = {}
+    aligned_motifs: dict[str, list[str]] = {}
+    aligned_oris: dict[str, list[str]] = {}
 
     for pos, seq_idx in enumerate(final_indices):
         name = names[seq_idx]
@@ -180,8 +179,8 @@ def align(
     if refine:
         consensus = _profile_consensus(final_profile)
 
-        refined_motifs: Dict[str, List[str]] = {}
-        refined_oris: Dict[str, List[str]] = {}
+        refined_motifs: dict[str, list[str]] = {}
+        refined_oris: dict[str, list[str]] = {}
 
         for name in names:
             aligned_seq, aligned_cons = _nw(
@@ -246,8 +245,8 @@ def _build_sub_matrix(
 
 
 def _nw_score(
-    seq_a: List[str],
-    seq_b: List[str],
+    seq_a: list[str],
+    seq_b: list[str],
     sub_matrix: np.ndarray,
     gap_open_penalty: int,
     gap_extend_penalty: int,
@@ -282,12 +281,12 @@ def _nw_score(
 
 
 def _nw(
-    seq_a: List[str],
-    seq_b: List[str],
+    seq_a: list[str],
+    seq_b: list[str],
     sub_matrix: np.ndarray,
     gap_open_penalty: int,
     gap_extend_penalty: int,
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Needleman-Wunsch global alignment with affine gap penalty."""
     import numpy as np
 
@@ -315,8 +314,8 @@ def _nw(
             D[i, j] = max(M[i, j - 1] + go, D[i, j - 1] + ge)
 
     # Traceback
-    aligned_a: List[str] = []
-    aligned_b: List[str] = []
+    aligned_a: list[str] = []
+    aligned_b: list[str] = []
 
     i, j = n, m
     curr_score = max(M[i, j], I[i, j], D[i, j])
@@ -373,11 +372,11 @@ def _nw(
     return aligned_a, aligned_b
 
 
-def _profile_consensus(profile: List[List[str]]) -> List[str]:
+def _profile_consensus(profile: list[list[str]]) -> list[str]:
     """Build consensus sequence from a profile."""
     from collections import Counter
 
-    consensus: List[str] = []
+    consensus: list[str] = []
     for col in profile:
         motifs = [m for m in col if m != "-"]
         if motifs:
@@ -388,13 +387,13 @@ def _profile_consensus(profile: List[List[str]]) -> List[str]:
 
 
 def _merge_profiles(
-    profile_a: List[List[str]],
-    profile_b: List[List[str]],
-    aligned_a: List[str],
-    aligned_b: List[str],
-) -> List[List[str]]:
+    profile_a: list[list[str]],
+    profile_b: list[list[str]],
+    aligned_a: list[str],
+    aligned_b: list[str],
+) -> list[list[str]]:
     """Merge two profiles based on aligned consensus sequences."""
-    merged: List[List[str]] = []
+    merged: list[list[str]] = []
     idx_a = 0
     idx_b = 0
 

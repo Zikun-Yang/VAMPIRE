@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, List, Dict, Tuple, Sequence, Literal
+from typing import TYPE_CHECKING, Sequence, Literal
 import numpy as np
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ def haplotype_neighbor(
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
 
-    aligned_motifs: Dict[str, List[str]] = adata.uns.get(f"{aligned_key}_motif_array")
+    aligned_motifs: dict[str, list[str]] = adata.uns.get(f"{aligned_key}_motif_array")
     if aligned_motifs is None:
         raise KeyError(
             f"Aligned motif array not found at uns['{aligned_key}_motif_array']. "
@@ -111,7 +111,7 @@ def haplotype_neighbor(
         "Computing distance matrices for metrics: %s", metrics
     )
 
-    dist_mats: Dict[str, np.ndarray] = {}
+    dist_mats: dict[str, np.ndarray] = {}
 
     alignment_metrics = [m for m in metrics if m in ("structural", "cnv")]
     if alignment_metrics:
@@ -330,12 +330,12 @@ def haplotype_leiden(
 # --------------------------------------------------------------------------- #
 
 def _compute_alignment_distances(
-    aligned_motifs: Dict[str, List[str]],
-    names: List[str],
+    aligned_motifs: dict[str, list[str]],
+    names: list[str],
     motif_distance: np.ndarray,
     gap_penalty: float,
-    metrics: List[str],
-) -> Dict[str, np.ndarray]:
+    metrics: list[str],
+) -> dict[str, np.ndarray]:
     """Compute pairwise distance matrices for the requested metrics.
 
     Returns a dict mapping metric name to an ``(n, n)`` distance matrix.
@@ -479,7 +479,7 @@ def _symmetrize_graph(
 
 
 def _fuse_graphs(
-    graphs: List[np.ndarray],
+    graphs: list[np.ndarray],
     method: str = "mean",
 ) -> np.ndarray:
     """Fuse multiple similarity graphs into one.
@@ -543,10 +543,10 @@ def _leiden_clustering(
 
 
 def _build_haplotype_consensus(
-    aligned_motifs: Dict[str, List[str]],
+    aligned_motifs: dict[str, list[str]],
     labels: np.ndarray,
-    names: List[str],
-) -> Dict[str, List[str]]:
+    names: list[str],
+) -> dict[str, list[str]]:
     """Build a consensus sequence for each haplotype cluster.
 
     At each alignment position the most frequent non-gap motif among cluster
@@ -555,7 +555,7 @@ def _build_haplotype_consensus(
     """
     from collections import Counter
 
-    consensus: Dict[str, List[str]] = {}
+    consensus: dict[str, list[str]] = {}
     unique_labels = sorted(set(labels))
 
     for h in unique_labels:
@@ -566,7 +566,7 @@ def _build_haplotype_consensus(
             continue
 
         seq_len = len(aligned_motifs[samples_in_h[0]])
-        h_consensus: List[str] = []
+        h_consensus: list[str] = []
 
         for pos in range(seq_len):
             motifs = [

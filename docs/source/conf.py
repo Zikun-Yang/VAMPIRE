@@ -129,6 +129,9 @@ html_theme_options = {
     },
 }
 
+# -- Options for turtorials -------------------------------------------------
+nb_execution_mode = "cache"
+
 # -- Options for plot -------------------------------------------------------
 
 """plot_include_source = True

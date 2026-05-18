@@ -800,6 +800,8 @@ def plot_tr_distribution(df: pl.DataFrame, fasta_metainfo: dict, resolution: int
         for i in range(n_win):
             w_start = int(i * win_len)
             w_end = int(min((i + 1) * win_len - 1, chr_len - 1))
+            if w_end < w_start:
+                continue
 
             tr_fraction, med_len, med_motif_len = calculate_window_stats(chrom_df, w_start, w_end)
 

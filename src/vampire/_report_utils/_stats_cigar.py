@@ -71,15 +71,19 @@ def ops_to_cigar(ops: List[str], m: int) -> str:
 
     return "".join(cigar)
 
-def get_copy_number(cigar: str, m: int) -> float:
+def get_copy_number(cigar: str, m: int | None) -> float:
     """
     Get the copy number of the region
     Inputs:
         cigar : str, CIGAR string with '/' separators
-        m : int, length of the motif
+        m : int | None, length of the motif
     Outputs:
         copy number : float, complete copies + fractional last copy
     """
+    # no motif is annotated here
+    if m is None:
+        return None
+    
     complete_num: int = cigar.count("/")
     last_copy_cigar: str = cigar.split("/")[-1]
     last_copy_length: float = 0.0

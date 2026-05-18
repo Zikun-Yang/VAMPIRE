@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import List, Dict, Tuple, Optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -18,8 +17,8 @@ logger = logging.getLogger(__name__)
 def haplotype(
     adata: ad.AnnData,
     aligned_key: str = "aligned",
-    n_clusters: Optional[int] = None,
-    gap_penalty: Optional[float] = None,
+    n_clusters: int | None = None,
+    gap_penalty: float | None = None,
     linkage_method: str = "average",
     store_key: str = "haplotype",
     max_k: int = 10,
@@ -43,10 +42,10 @@ def haplotype(
     aligned_key : str, default="aligned"
         Key prefix for aligned arrays in ``adata.uns``.
         Expects ``{aligned_key}_motif_array``.
-    n_clusters : int, optional
+    n_clusters : int | None, optional
         Number of haplotype clusters.  If ``None``, automatically
         determines the optimal number (see ``max_k``).
-    gap_penalty : float, optional
+    gap_penalty : float | None, optional
         Distance penalty for motif-vs-gap positions. Default is
         ``max_motif_distance * 0.3``, giving a mild penalty that
         tolerates copy-number variation without dominating the distance.
@@ -87,14 +86,14 @@ def haplotype(
     from scipy.cluster.hierarchy import linkage, fcluster
     from scipy.spatial.distance import squareform
 
-    aligned_motifs: Dict[str, List[str]] = adata.uns.get(f"{aligned_key}_motif_array")
+    aligned_motifs: dict[str, list[str]] = adata.uns.get(f"{aligned_key}_motif_array")
     if aligned_motifs is None:
         raise KeyError(
             f"aligned motif array not found at uns['{aligned_key}_motif_array']. "
             f"Run vp.anno.tl.align() first."
         )
 
-    names: List[str] = list(aligned_motifs.keys())
+    names: list[str] = list(aligned_motifs.keys())
     n = len(names)
 
     if n == 0:
@@ -171,11 +170,11 @@ def haplotype(
     return adata
 
 def _compute_aligned_distance(
-    aligned_motifs: Dict[str, List[str]],
-    names: List[str],
+    aligned_motifs: dict[str, list[str]],
+    names: list[str],
     motif_distance: np.ndarray,
     gap_penalty: float,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute pairwise structural and CNV distance matrices.
 
     Returns two independent matrices:
@@ -248,10 +247,10 @@ def _compute_aligned_distance(
     return structural_mat, cnv_mat
 
 def _build_haplotype_consensus(
-    aligned_motifs: Dict[str, List[str]],
+    aligned_motifs: dict[str, list[str]],
     labels: np.ndarray,
-    names: List[str],
-) -> Dict[str, List[str]]:
+    names: list[str],
+) -> dict[str, list[str]]:
     """
     Build consensus sequence for each haplotype cluster.
     """
@@ -289,7 +288,7 @@ def _evaluate_clusters(
     Z: np.ndarray,
     max_k: int,
     silhouette_threshold: float = 0.25,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Evaluate cluster quality for k=2..max_k using silhouette score.
 
@@ -312,7 +311,7 @@ def _evaluate_clusters(
             "best_score": 0.0,
         }
 
-    scores: List[float] = []
+    scores: list[float] = []
     for k in k_range:
         labels = fcluster(Z, t=k, criterion="maxclust")
         score = float(silhouette_score(dist_mat, labels, metric="precomputed"))

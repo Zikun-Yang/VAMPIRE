@@ -54,7 +54,7 @@ chrom	length	start	end	motif	orientation	sequence	score	cigar
 5bp_TR_2	200	136	140	0	+	ATTGG	10	5=/
 5bp_TR_2	200	141	145	0	+	ATTGG	10	5=/
 5bp_TR_2	200	146	150	0	+	TTTGG	1	1X4=/
-5bp_TR_2	200	151	154	1	+	ATTA	-8	3=1D1X/
+5bp_TR_2	200	151	154	0	+	ATTA	-8	3=1D1X/
 5bp_TR_2	200	155	159	0	-	ATCCA	10	5=/
 5bp_TR_2	200	160	164	0	-	ATCCA	10	5=/
 5bp_TR_2	200	165	169	0	-	ACCCA	1	1=1X3=/
@@ -64,4 +64,4 @@ chrom	length	start	end	motif	orientation	sequence	score	cigar
 5bp_TR_2	200	185	189	1	+	ATTCA	1	4=1X/
 5bp_TR_2	200	190	194	0	-	ATCCA	10	5=/
 5bp_TR_2	200	195	199	0	-	ATCCA	10	5=/
-5bp_TR_2	200	200	200	1	+	A	2	1=
+5bp_TR_2	200	200	200	0	+	A	2	1=

@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import Optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def motif_abundance_pca(
     adata: ad.AnnData,
-    layer: Optional[str] = None,
+    layer: str | None = None,
     clr_transform: bool = False,
     n_components: int = 10,
 ) -> ad.AnnData:
@@ -27,7 +26,7 @@ def motif_abundance_pca(
     ----------
     adata : ad.AnnData
         Annotated data with motif abundance in ``X`` or ``layers``.
-    layer : str, optional
+    layer : str | None, optional
         Layer key to use instead of ``adata.X``.
     clr_transform : bool, default=False
         If ``True``, apply a centered log-ratio transform before PCA.

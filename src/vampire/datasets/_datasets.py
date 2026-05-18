@@ -10,7 +10,7 @@ def _get_data_path(filename: str) -> Path:
     from pathlib import Path
     return Path(__file__).parent / "data" / filename
 
-def ancestry() -> Dict[str, str]:
+def ancestry() -> dict[str, str]:
     """
     Load ancestry information for the HPRCp1, HGSVCp1, APGp1 samples.
 

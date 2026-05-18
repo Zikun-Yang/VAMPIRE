@@ -1,3 +1,5 @@
+# News
+
 <!-- marker: after prelude -->
 
 ## 2026-05-07 — VAMPIRE v0.4.0a1 (preview)

@@ -1,0 +1,18 @@
+2026-05-18 20:35:46 - vampire.main - INFO - Created job directory: .vampire/20260518_203546
+2026-05-18 20:35:46 - vampire._anno - INFO - Auto-selecting ksize using scan coverage(inactivated by --no-auto)
+2026-05-18 20:35:46 - vampire._anno - INFO - Selecting k from [31, 25, 17, 13, 11, 9, 7, 5, 3]
+2026-05-18 20:35:47 - vampire._anno - INFO - Auto-selected k=5 (coverage 403 bp)
+2026-05-18 20:35:47 - vampire._anno - INFO - Finished reading fasta file: 003_5bp_snv_gap_rc.fa
+2026-05-18 20:35:47 - vampire._anno - INFO - Whether to align reverse strand: True
+2026-05-18 20:35:47 - vampire._anno - INFO - Finished loading reference motif set
+2026-05-18 20:35:47 - vampire._anno - WARNING - Invalid characters found in sequence 5bp_TR_1: ['N']
+2026-05-18 20:35:47 - vampire._anno - WARNING - Invalid characters found in sequence 5bp_TR_2: ['N']
+2026-05-18 20:35:48 - vampire._anno - INFO - Initialized BK-tree with 40 database motifs
+2026-05-18 20:35:48 - vampire._anno - INFO - Wrote 003_5bp_snv_gap_rc.motif.tsv
+2026-05-18 20:35:48 - vampire._anno - INFO - Wrote 003_5bp_snv_gap_rc.distance.tsv
+2026-05-18 20:35:48 - vampire._anno - INFO - Wrote 003_5bp_snv_gap_rc.annotation.tsv
+2026-05-18 20:35:48 - vampire._anno - INFO - Wrote 003_5bp_snv_gap_rc.concise.tsv
+2026-05-18 20:35:48 - vampire._anno - INFO - Time used: 2.15 seconds
+2026-05-18 20:35:49 - vampire._anno - INFO - Wrote 003_5bp_snv_gap_rc.h5ad
+2026-05-18 20:35:49 - vampire._anno - INFO - Generated web summary: 003_5bp_snv_gap_rc.web_summary.html
+2026-05-18 20:35:49 - vampire._anno - INFO - Bye.

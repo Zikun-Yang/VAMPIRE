@@ -109,15 +109,14 @@ def make_stats(params: dict) -> dict:
             sample_order: List[str] = list(adata.obs.sort_values(by="copy_number").index)
             copy_number_list: List[float] = adata.obs["copy_number"]
             anno_extra = {
-                "AUTO_MODE": params["auto"],
+                "AUTO_MODE": not params["no_auto"],
                 "KSIZE": params["ksize"],
                 "ALIGNMENT_PARAMETERS": f"{params['match_score']}, {params['mismatch_penalty']}, {params['gap_open_penalty']}, {params['gap_extend_penalty']}",
-                "MIN_ALIGNMENT_SCORE": params["min_score"],
                 "NUMBER_OF_SAMPLES": adata.obs.shape[0],
                 "NUMBER_OF_MOTIFS": adata.var.shape[0],
                 "MIN_COPY_NUMBER": copy_number_list.min(),
                 "MEAN_COPY_NUMBER": round(copy_number_list.mean(), 1),
-                "MEDIAN_COPY_NUMBER": copy_number_list.median(),
+                "MEDIAN_COPY_NUMBER": round(copy_number_list.median(), 1),
                 "MAX_COPY_NUMBER": copy_number_list.max(),
                 "WATERFALL_PLOT": fig_to_html(
                     vp.anno.pl.waterfall(
