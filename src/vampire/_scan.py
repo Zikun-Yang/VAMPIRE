@@ -3099,7 +3099,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
 
     # read input fasta file
     fasta: Iterator[SeqRecord] = read_fasta(cfg["input"])
-    logger.info(f"Finished reading fasta file: {cfg["input"]}")
+    logger.info(f"Finished reading fasta file: {cfg['input']}")
 
     # split fasta file into windows
     Path(JOB_DIR + "/windows").mkdir(parents=True, exist_ok=True)
@@ -3162,7 +3162,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
     
     # Copy final results file
     final_results_src = f"{JOB_DIR}/final_results.tsv"
-    final_results_dst = f"{cfg["prefix"]}.tsv"
+    final_results_dst = f"{cfg['prefix']}.tsv"
     shutil.copy2(final_results_src, final_results_dst)
     logger.info(f"Generated final annotation: {final_results_dst}")
 
@@ -3215,4 +3215,4 @@ def run_scan(cfg: dict[str, Any]) -> None:
     logger.info("Bye.")
     
     # copy log file
-    shutil.copy2(f"{JOB_DIR}/log.log", f"{cfg["prefix"]}.log")
+    shutil.copy2(f"{JOB_DIR}/log.log", f"{cfg['prefix']}.log")
