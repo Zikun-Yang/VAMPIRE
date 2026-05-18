@@ -84,7 +84,7 @@ class TestComplexSequence:
         rc_rows = anno_df.filter(pl.col("orientation") == "-")
         assert rc_rows.shape[0] > 0
     
-    def test_exact_file_output(self, tmp_anno_cfg): # TODO
+    def test_exact_file_output(self, tmp_anno_cfg):
         """Test that output files match expected exactly (except for log)."""
         cfg = tmp_anno_cfg("003-5bp_snv_gap_rc.fa", reverse=True)
         run_anno(cfg)
