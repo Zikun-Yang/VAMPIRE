@@ -3203,7 +3203,7 @@ def run_scan(cfg: dict[str, Any]) -> None:
         make_report(JOB_DIR, str(files("vampire.resources").joinpath("scan_web_summary_template.html")), data)
         # copy web summary file
         web_summary_src = f"{JOB_DIR}/web_summary.html"
-        web_summary_dst = f"{cfg["prefix"]}.web_summary.html"
+        web_summary_dst = f"{cfg['prefix']}.web_summary.html"
         shutil.copy2(web_summary_src, web_summary_dst)
         logger.info(f"Generated web summary: {web_summary_dst}")
     else:
