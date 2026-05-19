@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import List, Tuple, Dict, Any, Literal, Optional
+from typing import Any, Literal, Optional, Sequence
 import numpy as np
 import polars as pl
 
@@ -28,11 +28,11 @@ DEFAULT_LINE_WIDTH = (
 )
 
 # Module-level colormap constants
-_RAINBOW_COLORMAP: List[str] = [
+_RAINBOW_COLORMAP: list[str] = [
     "#f94144", "#f8961e", "#f9c74f", "#90be6d", "#43aa8b", "#4d908e", "#577590", "#277da1", "#5983f2", "#898bf1",
     "#8945dc"
 ]
-_GLASBEY_COLORMAP: List[str] = [
+_GLASBEY_COLORMAP: list[str] = [
     "#5983f2", "#87db96", "#eef248", "#f25b76", "#f29dd3", "#38abbd", "#f2b668", "#a570f2", "#f2b668", "#288126",
     "#3e3ed1", "#48f0d1", "#987b74", "#c5c2f2", "#96ab83", "#b639b1", "#63586e", "#722222", "#428acd", "#f1eba8",
     "#154715", "#877928", "#f2948c", "#e2bebe", "#627767", "#afe0f2", "#e04392", "#a386af", "#6a2e9b", "#3bbc38",
@@ -58,12 +58,12 @@ _GLASBEY_COLORMAP: List[str] = [
     "#6e805d", "#b89ec7", "#5ae1f1", "#985579", "#9c659f", "#732b90", "#826a78", "#636284", "#eca6a3", "#dbd094",
     "#6a6720", "#195354", "#5761f2", "#3dcd76", "#edb3f0", "#7b8e52", "#534019", "#92c9d1"
 ]
-_SEQUENTIAL_COLORMAP: List[str] = [
+_SEQUENTIAL_COLORMAP: list[str] = [
     "#FED976", "#FDBA9B", "#F7958D", "#ED96C9", "#ec57e5", "#a4cae4", "#7bd1ca", "#bfde9f", "#58d581",
     "#FEBD0B", "#FC8D59", "#EF3B2C", "#DD3497", "#af14a8", "#4292C6", "#35978F", "#7FBC41", "#238B45",
     "#DEA402", "#d24504", "#91150b", "#7d1552", "#3d073a", "#204c69", "#143936", "#3f5d20", "#092512"
 ]
-_COLORMAP_OPTIONS: Dict[str, List[str]] = {
+_COLORMAP_OPTIONS: dict[str, list[str]] = {
     "rainbow": _RAINBOW_COLORMAP,
     "glasbey": _GLASBEY_COLORMAP,
     "sequential": _SEQUENTIAL_COLORMAP,
@@ -73,8 +73,8 @@ def _build_element_colormap(
     adata: ad.AnnData,
     feature: str = "motif",
     color: str = "id",
-    colormap: dict | List | str = "rainbow",
-) -> Dict[str, str]:
+    colormap: dict | list | str = "rainbow",
+) -> dict[str, str]:
     """
     Build element-to-color mapping for waterfall visualization.
 
@@ -91,17 +91,17 @@ def _build_element_colormap(
 
     Returns
     -------
-    Dict[str, str]
+    dict[str, str]
         Mapping from element (motif id or color column value) to color hex string.
     """
-    all_id_list: List[str] = list(adata.var.index)
+    all_id_list: list[str] = list(adata.var.index)
     if color == "id":
-        id2element: Dict[str, Any] = {m: m for m in all_id_list}
+        id2element: dict[str, Any] = {m: m for m in all_id_list}
     else:
         if color not in adata.var.columns:
             raise ValueError(f"color = '{color}' not found in adata.var.columns: {adata.var.columns}")
         id2element = dict(zip(adata.var.index, adata.var[color]))
-    all_element_list: List[Any] = list(dict.fromkeys(id2element.values()))
+    all_element_list: list[Any] = list(dict.fromkeys(id2element.values()))
 
     element_num: int = len(all_element_list)
 
@@ -109,31 +109,31 @@ def _build_element_colormap(
         case str():
             if colormap not in _COLORMAP_OPTIONS:
                 raise ValueError(f"colormap {colormap} is not found! please select from {_COLORMAP_OPTIONS.keys()}")
-            default_colormap: List[str] = _COLORMAP_OPTIONS[colormap]
+            default_colormap: list[str] = _COLORMAP_OPTIONS[colormap]
 
             if element_num > len(default_colormap):
                 logger.warning(f"Number of {color} is larger then number of colors in default colormap, using black to represent remaining motifs")
                 default_colormap += ["#1a1a1a"] * (element_num - len(default_colormap))
-            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, default_colormap[:element_num]))
+            mapped_colormap: dict[str, str] = dict(zip(all_element_list, default_colormap[:element_num]))
 
         case list():
             if not all(isinstance(x, str) for x in colormap):
-                raise TypeError("List colormap must be List[str]")
+                raise TypeError("list colormap must be list[str]")
 
             if element_num > len(colormap):
                 logger.warning(f"Number of {color} is larger then number of colors in given colormap, using black to represent remaining motifs")
                 colormap += ["#1a1a1a"] * (element_num - len(colormap))
-            mapped_colormap: Dict[str, str] = dict(zip(all_element_list, colormap[:element_num]))
+            mapped_colormap: dict[str, str] = dict(zip(all_element_list, colormap[:element_num]))
 
         case dict():
             if not all(isinstance(k, str) and isinstance(v, str) for k, v in colormap.items()):
-                raise TypeError("Dict colormap must be Dict[str, str]")
+                raise TypeError("dict colormap must be dict[str, str]")
 
             missing = set(all_element_list) - set(colormap.keys())
             if missing:
                 raise KeyError(f"Missing {color} in colormap: {missing}")
 
-            mapped_colormap: Dict[str, str] = colormap
+            mapped_colormap: dict[str, str] = colormap
 
     return mapped_colormap
 
@@ -144,11 +144,11 @@ def _build_element_colormap(
 #
 """
 def trackplot(
-    tracks: List,
+    tracks: list,
     region: str,
     title: str = "",
     x_title: str = "Position (bp)",
-    figsize: Tuple[int, int] = (800, 400),
+    figsize: tuple[int, int] = (800, 400),
     vertical_spacing: float = 0.02,
     track_name_dx: float = -0.07,
     **kwargs
@@ -162,8 +162,8 @@ def trackplot(
 
     Parameters
     ----------
-    tracks : List[Dict]
-        List of track configuration dictionaries. Each dictionary should contain:
+    tracks : list[dict]
+        list of track configuration dictionaries. Each dictionary should contain:
 
         Common fields for all track types:
         
@@ -180,7 +180,7 @@ def trackplot(
         - **min_value** (`float`, optional) - Minimum value. Default is the minimum in the data
         - **linewidth** (`float`, optional) - Line width. Default is 1
         - **color** (`str`, optional) - Line or bar color. Default is `"#212529"`
-        - **colorscale** (`List[str]` or `List[Tuple[float, str]]`, optional) - Colorscale for density plot
+        - **colorscale** (`list[str]` or `list[tuple[float, str]]`, optional) - Colorscale for density plot
 
         Additional options for `"bed"` tracks:
 
@@ -195,7 +195,7 @@ def trackplot(
 
         - **max_value** (`float`, optional) - Maximum value. Default is the maximum in the data
         - **min_value** (`float`, optional) - Minimum value. Default is the minimum in the data
-        - **colorscale** (`List[str]` or `List[Tuple[float, str]]`, optional) - Colorscale for heatmap
+        - **colorscale** (`list[str]` or `list[tuple[float, str]]`, optional) - Colorscale for heatmap
         - **flip_y** (`bool`, optional) - Whether to flip the y-axis. Default is False
     
     region : str
@@ -207,7 +207,7 @@ def trackplot(
     x_title : str, optional
         Title of the x axis. Default is `"Position (bp)"`.
     
-    figsize : Tuple[int, int], optional
+    figsize : tuple[int, int], optional
         Figure size as (width, height) in pixels. Default is (800, 400).
     
     vertical_spacing : float, optional
@@ -287,7 +287,7 @@ def trackplot(
         if track["type"] != "heatmap":
             heights[idx] = assignable_height / total_ratio * track.get("height", 1.0)
     heights: np.ndarray = heights / heights.sum()
-    heights: List[float] = heights.tolist()
+    heights: list[float] = heights.tolist()
     
     # set subplot titles and heights
     fig = sp.make_subplots(
@@ -400,7 +400,7 @@ def trackplot(
 
 def _plot_bedgraph_track_line(
     fig: go.Figure,
-    track: Dict,
+    track: dict,
     data: pl.DataFrame,
     row: int
 ) -> None:
@@ -411,7 +411,7 @@ def _plot_bedgraph_track_line(
     ----------
     fig : go.Figure
         The Plotly figure object to add the bedgraph track to.
-    track : Dict
+    track : dict
         Track configuration dictionary containing plot settings (e.g., name, color,
         max_value, min_value).
     data : pl.DataFrame
@@ -479,7 +479,7 @@ def _plot_bedgraph_track_line(
 
 def _plot_bedgraph_track_bar(
     fig: go.Figure,
-    track: Dict,
+    track: dict,
     data: pl.DataFrame,
     row: int
 ) -> None:
@@ -490,7 +490,7 @@ def _plot_bedgraph_track_bar(
     ----------
     fig : go.Figure
         The Plotly figure object to add the bedgraph track to.
-    track : Dict
+    track : dict
         Track configuration dictionary containing plot settings (e.g., name, color,
         max_value, min_value).
     data : pl.DataFrame
@@ -547,7 +547,7 @@ def _plot_bedgraph_track_bar(
 
 def _plot_bedgraph_track_density(
     fig: go.Figure,
-    track: Dict,
+    track: dict,
     data: pl.DataFrame,
     row: int
 ) -> None:
@@ -577,7 +577,7 @@ def _plot_bedgraph_track_density(
 
     all_columns = data_sorted.columns
 
-    DEFAULT_COLORMAP: List[str] = ["#5E4FA2", "#3288BD", "#66C2A5", "#ABDDA4", "#E6F598", "#FFFFBF", "#FEE08B", "#FDAE61", "#F46D43", "#D53E4F", "#9E0142"]
+    DEFAULT_COLORMAP: list[str] = ["#5E4FA2", "#3288BD", "#66C2A5", "#ABDDA4", "#E6F598", "#FFFFBF", "#FEE08B", "#FDAE61", "#F46D43", "#D53E4F", "#9E0142"]
     colorscale = track.get("colorscale", DEFAULT_COLORMAP)
     if all(isinstance(x, str) for x in colorscale):
         values = data_sorted["value"].to_numpy()
@@ -593,7 +593,7 @@ def _plot_bedgraph_track_density(
         """)
 
     # customdata must be 2D
-    customdata: List[List[List[Any]]] = [
+    customdata: list[list[list[Any]]] = [
         [
             [row_data[col] for col in all_columns]
             for row_data in data_sorted.iter_rows(named=True)
@@ -642,10 +642,10 @@ def _plot_bedgraph_track_density(
 
 def _plot_bed_track(
     fig: go.Figure,
-    track: Dict,
+    track: dict,
     data: pl.DataFrame,
     row: int,
-    region: Tuple[str, int, int]
+    region: tuple[str, int, int]
 ) -> None:
     """
     Plot a bed track as rectangles or arrows.
@@ -654,7 +654,7 @@ def _plot_bed_track(
     ----------
     fig : go.Figure
         The Plotly figure object to add the bed track to.
-    track : Dict
+    track : dict
         Track configuration dictionary containing plot settings (e.g., name,
         stranded). If stranded is True, arrows are drawn; otherwise rectangles.
 
@@ -667,7 +667,7 @@ def _plot_bed_track(
         optionally itemRgb (for colors) and strand (if stranded is True).
     row : int
         Subplot row number (1-indexed) where the bed track should be added.
-    region : Tuple[str, int, int]
+    region : tuple[str, int, int]
         Genomic region in the format (chrom, start, end).
     
     Returns
@@ -824,7 +824,7 @@ def _plot_bed_track(
 
 def _plot_heatmap_track(
     fig: go.Figure,
-    track: Dict,
+    track: dict,
     data: pl.DataFrame,
     row: int
 ) -> None:
@@ -835,7 +835,7 @@ def _plot_heatmap_track(
     ----------
     fig : go.Figure
         The Plotly figure object to add the heatmap to.
-    track : Dict
+    track : dict
         Track configuration dictionary containing plot settings (e.g., max_value,
         min_value, colorscale, flip_y).
     data : pl.DataFrame
@@ -859,7 +859,7 @@ def _plot_heatmap_track(
         return
 
     # prepare colorscale
-    DEFAULT_COLORMAP: List[str] = ["#5E4FA2", "#3288BD", "#66C2A5", "#ABDDA4", "#E6F598", "#FFFFBF", "#FEE08B", "#FDAE61", "#F46D43", "#D53E4F", "#9E0142"]
+    DEFAULT_COLORMAP: list[str] = ["#5E4FA2", "#3288BD", "#66C2A5", "#ABDDA4", "#E6F598", "#FFFFBF", "#FEE08B", "#FDAE61", "#F46D43", "#D53E4F", "#9E0142"]
     colorscale = track.get("colorscale", DEFAULT_COLORMAP)
     if all(isinstance(x, str) for x in colorscale):
         # assign breaks to colors
@@ -1088,7 +1088,7 @@ def _is_float_str_tuple(x):
         and isinstance(x[1], str)
     )
 
-def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
+def _get_colorscale(values: np.ndarray, color_list: list[str]) -> np.ndarray:
     """
     Get numeric color break boundaries for given values.
 
@@ -1096,13 +1096,13 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
     ----------
     values : np.ndarray
         Array of values.
-    color_list : List[str]
-        List of colors.
+    color_list : list[str]
+        list of colors.
 
     Returns
     -------
-    List[Tuple[float, str]]
-        List of color scale tuples with lower/upper boundaries and colors.
+    list[tuple[float, str]]
+        list of color scale tuples with lower/upper boundaries and colors.
     """
     import numpy as np
 
@@ -1151,10 +1151,10 @@ def _get_colorscale(values: np.ndarray, color_list: List[str]) -> np.ndarray:
 def waterfall(
     adata: ad.AnnData,
     feature: str = "motif",
-    sample_order: Optional[List[str]] = None,
+    sample_order: list[str] | None = None,
     color: str = "id",
-    colormap: dict | List | str = "rainbow",
-    figsize: Tuple[Optional[int], Optional[int]] = (None, None),
+    colormap: dict | list | str = "rainbow",
+    figsize: tuple[Optional[int], Optional[int]] = (None, None),
     track_name_dx: float = -0.01,
     **kwargs
 ) -> go.Figure:
@@ -1191,7 +1191,7 @@ def waterfall(
         - list: sequential color assignment following input order
         - str: use preset colormap: `rainbow`, `glasbey`, `sequential`
 
-    figsize : Tuple[Optional[int], Optional[int]], optional
+    figsize : tuple[Optional[int], Optional[int]], optional
         Figure size as (width, height) in pixels. Default is (None, None).
 
         - (None, None): auto-compute both dimensions from data.
@@ -1235,13 +1235,13 @@ def waterfall(
     import anndata as ad
     import plotly.graph_objects as go
     
-    track_list: List[Dict] = []
+    track_list: list[dict] = []
     max_x: int = 0
 
     # check sample_order
     if sample_order is None:
-        sample_order: List[str] = list(adata.obs.index)
-    all_sample_list: List[str] = list(adata.obs.index)
+        sample_order: list[str] = list(adata.obs.index)
+    all_sample_list: list[str] = list(adata.obs.index)
     missing = set(all_sample_list) - set(sample_order)
     if missing:
         raise KeyError(f"Missing samples in sample_order: {missing}")
@@ -1251,21 +1251,21 @@ def waterfall(
         adata, feature=feature, color=color, colormap=colormap
     )
 
-    motif_array_dict: Dict[str, List[str]] = adata.uns[f"{feature}_array"]
+    motif_array_dict: dict[str, list[str]] = adata.uns[f"{feature}_array"]
     orientation_name: str = feature.replace("motif", "orientation")
-    orientation_array_dict: Dict[str, List[str]] = adata.uns[f"{orientation_name}_array"]
+    orientation_array_dict: dict[str, list[str]] = adata.uns[f"{orientation_name}_array"]
     for sample in sample_order:
         # get data
-        motif_array: List[str] = motif_array_dict[sample]
-        orientation_array: List[str] = orientation_array_dict[sample]
+        motif_array: list[str] = motif_array_dict[sample]
+        orientation_array: list[str] = orientation_array_dict[sample]
         array_len: int = len(motif_array)
 
         # skip gaps ("-") but keep original positions so alignment is preserved
-        start_array: List[float] = []
-        end_array: List[float] = []
-        motif_filtered: List[str] = []
-        ori_filtered: List[str] = []
-        color_filtered: List[str] = []
+        start_array: list[float] = []
+        end_array: list[float] = []
+        motif_filtered: list[str] = []
+        ori_filtered: list[str] = []
+        color_filtered: list[str] = []
 
         for pos, (m, o) in enumerate(zip(motif_array, orientation_array)):
             if m == "-":
@@ -1362,10 +1362,10 @@ def waterfall(
 def waterfall_legend(
     adata: ad.AnnData,
     feature: str = "motif",
-    sample_order: Optional[List[str]] = None,
+    sample_order: Optional[list[str]] = None,
     color: str = "id",
-    colormap: dict | List | str = "rainbow",
-    figsize: Tuple[Optional[int], Optional[int]] = (None, None),
+    colormap: dict | list | str = "rainbow",
+    figsize: tuple[Optional[int], Optional[int]] = (None, None),
     track_name_dx: float = -0.01,
     **kwargs
 ) -> go.Figure:
@@ -1397,7 +1397,7 @@ def waterfall_legend(
         Color mapping specification. Must match the colormap used in the
         corresponding `waterfall()` call for consistent coloring.
 
-    figsize : Tuple[Optional[int], Optional[int]], optional
+    figsize : tuple[Optional[int], Optional[int]], optional
         Figure size as (width, height) in pixels. Default is (None, None).
 
         - (None, None): auto-compute both dimensions from data.
@@ -1441,7 +1441,7 @@ def waterfall_legend(
     max_label_len = max(len(str(k)) for k in mapped_colormap.keys())
 
     gap_length: float = 0.1
-    y_pos_list: List[float] = []
+    y_pos_list: list[float] = []
     for i, (element, color_val) in enumerate(mapped_colormap.items()):
         y_pos = n_items - 1 - i - i * gap_length  # top-to-bottom order
         y_pos_list.append(y_pos)
@@ -1532,8 +1532,8 @@ def _get_kmer_array(
     -------
     None
     """
-    seq_array: Dict[str, str] = adata.uns["sequence"]
-    kmer_array: Dict[str, List[str]] = {
+    seq_array: dict[str, str] = adata.uns["sequence"]
+    kmer_array: dict[str, list[str]] = {
         sample: [seq[i: i + ksize] for i in range(len(seq) - ksize + 1)]
         for sample, seq in seq_array.items()
     }
@@ -1553,7 +1553,7 @@ def logo(
     colormap: dict = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728", "-": "#403d39"},
     conserved_color: Optional[str] = "#cccccc",
     title: str = "",
-    figsize: Tuple[int, int] = (1200, 300),
+    figsize: tuple[int, int] = (1200, 300),
     **kwargs
 ) -> go.Figure:
     """
@@ -1580,7 +1580,7 @@ def logo(
     title: str
         The title of the plot. Default is empty.
 
-    figsize : Tuple[int, int], optional
+    figsize : tuple[int, int], optional
         Figure size as (width, height) in pixels. Default is (1200, 300).
     
     **kwargs
@@ -1608,8 +1608,8 @@ def logo(
     import plotly.graph_objects as go
 
     # config
-    LETTERS: List[str] = ["A", "C", "G", "T", "-"]
-    LETTER_TO_IDX: Dict[str, int] = {
+    LETTERS: list[str] = ["A", "C", "G", "T", "-"]
+    LETTER_TO_IDX: dict[str, int] = {
         "A": 0,
         "C": 1,
         "G": 2,
@@ -1683,12 +1683,12 @@ def logo(
 
 def logo_from_matrix(
     matrix: np.ndarray,
-    letters: List[str],
+    letters: list[str],
     feature: Literal["count", "probability", "information"] = "information",
     colormap: dict = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728", "-": "#403d39"},
     conserved_color: Optional[str] = "#cccccc",
     title: str = "",
-    figsize: Tuple[int, int] = (1200, 300),
+    figsize: tuple[int, int] = (1200, 300),
     **kwargs
 ) -> go.Figure:
     """
@@ -1704,7 +1704,7 @@ def logo_from_matrix(
         matrix[i, j] gives the contribution (count/probability/information)
         of symbol `letters[j]` at position i.
 
-    letters : List[str]
+    letters : list[str]
         Symbols corresponding to matrix columns, e.g. ["A", "C", "G", "T", "-"].
     
     feature: Literal["count", "probability", "information"]
@@ -1720,7 +1720,7 @@ def logo_from_matrix(
     title: str
         The title of the plot. Default is empty.
 
-    figsize : Tuple[int, int], optional
+    figsize : tuple[int, int], optional
         Figure size as (width, height) in pixels. Default is (1200, 300).
     
     **kwargs
@@ -1757,8 +1757,8 @@ def logo_from_matrix(
     import numpy as np
     import plotly.graph_objects as go
 
-    LETTERS: List[str] = letters
-    LETTER_PATHS: Dict[str, str] = _get_letter_paths(letters = LETTERS)
+    LETTERS: list[str] = letters
+    LETTER_PATHS: dict[str, str] = _get_letter_paths(letters = LETTERS)
     LETTER_WIDTH: float = 0.9 # width per position, 0-1
 
     # check colormap
@@ -1899,18 +1899,18 @@ def logo_from_matrix(
     return fig
 
 def _get_letter_paths(
-    letters: List[str] = ["A", "C", "G", "T", "-"],
+    letters: list[str] = ["A", "C", "G", "T", "-"],
     fontsize: int = 1, 
     fontfamily: str = "DejaVu Sans Mono", 
     weight: str = "bold"
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Get the letter paths
 
     Parameters
     ----------
-    letters: List[str]
-        List of letters. Default is ["A", "C", "G", "T"].
+    letters: list[str]
+        list of letters. Default is ["A", "C", "G", "T"].
     fontsize: int
         Font size. Default is 1.
     fontfamily: str
@@ -1920,8 +1920,8 @@ def _get_letter_paths(
 
     Returns
     -------
-    Dict[str, str]
-        Dictionary of letter paths.
+    dict[str, str]
+        dictionary of letter paths.
     """
     from matplotlib.textpath import TextPath
     from matplotlib.font_manager import FontProperties
@@ -1942,7 +1942,7 @@ def _get_letter_paths(
 def _path_to_xy(
     path: str, 
     n_samples=30
-) -> Tuple[List[float], List[float]]:
+) -> tuple[list[float], list[float]]:
     """
     Convert an SVG path string into x/y coordinate arrays for polygon rendering.
 
@@ -1969,11 +1969,11 @@ def _path_to_xy(
 
     Returns
     -------
-    x : List[float]
-        List of x-coordinates representing the polygon vertices.
+    x : list[float]
+        list of x-coordinates representing the polygon vertices.
 
-    y : List[float]
-        List of y-coordinates representing the polygon vertices.
+    y : list[float]
+        list of y-coordinates representing the polygon vertices.
 
     Notes
     -----
@@ -2063,8 +2063,8 @@ def _compute_information_content(
 """
 def heatmap_from_matrix(
     matrix: "np.ndarray",
-    row_labels: Optional[List[str]] = None,
-    col_labels: Optional[List[str]] = None,
+    row_labels: Optional[list[str]] = None,
+    col_labels: Optional[list[str]] = None,
     standard_scale: Optional[Literal["obs", "var", "zscore_obs", "zscore_var"]] = None,
     cluster_rows: bool = True,
     cluster_cols: bool = True,
@@ -2073,16 +2073,16 @@ def heatmap_from_matrix(
     row_cluster_metric: str = "euclidean",
     col_cluster_metric: str = "euclidean",
     dendrogram_ratio: float = 0.15,
-    colorscale: str | List | None = None,
+    colorscale: str | list | None = None,
     showticklabels: bool = True,
-    figsize: Tuple[int, int] = (800, 600),
+    figsize: tuple[int, int] = (800, 600),
     vmax: Optional[float] = None,
     vmin: Optional[float] = None,
     colorbar_title: str = "Value",
     hover_template: str = "Row: %{y}<br>Col: %{x}<br>Value: %{hovertext}<extra></extra>",
-    row_annotation: Optional[List[str]] = None,
-    col_annotation: Optional[List[str]] = None,
-    annotation_palette: Optional[Dict[str, str]] = None,
+    row_annotation: Optional[list[str]] = None,
+    col_annotation: Optional[list[str]] = None,
+    annotation_palette: Optional[dict[str, str]] = None,
     annotation_ratio: float = 0.03,
     **kwargs,
 ) -> "go.Figure":
@@ -2135,7 +2135,7 @@ def heatmap_from_matrix(
     vmin : float, optional
         Lower bound for clipping the heatmap color scale.
         Values below ``vmin`` are clipped for visualization only.
-    figsize : Tuple[int, int], default=(800, 600)
+    figsize : tuple[int, int], default=(800, 600)
         Figure size in pixels.
     colorbar_title : str, default="Value"
         Title shown next to the color bar.
@@ -2528,9 +2528,9 @@ def motif_abundance_heatmap(
     row_cluster_metric: str = "euclidean",
     col_cluster_metric: str = "euclidean",
     dendrogram_ratio: float = 0.15,
-    colorscale: str | List | None = None,
+    colorscale: str | list | None = None,
     showticklabels: bool = True,
-    figsize: Tuple[int, int] = (800, 600),
+    figsize: tuple[int, int] = (800, 600),
     vmax: Optional[float] = None,
     vmin: Optional[float] = None,
     **kwargs,
@@ -2574,7 +2574,7 @@ def motif_abundance_heatmap(
         Plotly colorscale name.  Default is ``"Plasma"``.
     showticklabels : bool, default=True
         Whether to display row and column tick labels.
-    figsize : Tuple[int, int], default=(800, 600)
+    figsize : tuple[int, int], default=(800, 600)
         Figure size in pixels.
     vmax : float, optional
         Upper bound for clipping the heatmap color scale.
@@ -2733,8 +2733,8 @@ def haplotype_distance_heatmap(
     metric: str = "structural",
     reorder: bool = True,
     cluster: bool = False,
-    figsize: Tuple[int, int] = (800, 700),
-    colorscale: str | List | None = None,
+    figsize: tuple[int, int] = (800, 700),
+    colorscale: str | list | None = None,
     **kwargs,
 ) -> "go.Figure":
     """Plot sample pairwise distance matrix from haplotype analysis.
@@ -2758,9 +2758,9 @@ def haplotype_distance_heatmap(
     cluster : bool, default=False
         If ``True``, hierarchically cluster rows and columns
         (overrides ``reorder``).
-    figsize : Tuple[int, int], default=(800, 700)
+    figsize : tuple[int, int], default=(800, 700)
         Figure size in pixels.
-    colorscale : str | List | None, default=None
+    colorscale : str | list | None, default=None
         Plotly colorscale for the heatmap. If ``None``, defaults to a red-to-white scale.
     **kwargs
         Additional arguments passed to ``heatmap_from_matrix``.
@@ -2824,8 +2824,8 @@ def motif_abundance_pca(
     adata: "ad.AnnData",
     color_by: Optional[str] = None,
     shape_by: Optional[str] = None,
-    components: Tuple[int, int] = (1, 2),
-    figsize: Tuple[int, int] = (600, 600),
+    components: tuple[int, int] = (1, 2),
+    figsize: tuple[int, int] = (600, 600),
     title: Optional[str] = None,
     marker_size: int = 10,
     colorscale: Optional[str] = None,
@@ -2846,10 +2846,10 @@ def motif_abundance_pca(
         a discrete palette; numeric columns use a continuous colorscale.
     shape_by : str, optional
         Column in ``adata.obs`` for marker shape.  Must be categorical.
-    components : Tuple[int, int], default=(1, 2)
+    components : tuple[int, int], default=(1, 2)
         Which two PCs to plot.  1-based indexing, e.g. ``(1, 2)`` for PC1
         vs PC2, ``(2, 3)`` for PC2 vs PC3.
-    figsize : Tuple[int, int], default=(600, 600)
+    figsize : tuple[int, int], default=(600, 600)
         Figure size in pixels.
     title : Optional[str], default=None
         Plot title.
@@ -2906,7 +2906,7 @@ def motif_abundance_pca(
     # ---- colour mapping ----
     color_series = None
     color_is_numeric = False
-    color_map: Optional[Dict[str, str]] = None
+    color_map: Optional[dict[str, str]] = None
     if color_by is not None:
         if color_by not in adata.obs.columns:
             raise KeyError(f"color_by column '{color_by}' not found in adata.obs")
@@ -2920,7 +2920,7 @@ def motif_abundance_pca(
 
     # ---- shape mapping ----
     shape_series = None
-    shape_map: Optional[Dict[str, str]] = None
+    shape_map: Optional[dict[str, str]] = None
     _SYMBOLS = [
         "circle", "square", "diamond", "cross", "x", "triangle-up",
         "triangle-down", "star", "hexagon", "pentagon", "octagon",
@@ -3086,7 +3086,7 @@ def motif_abundance_pca_variance(
     n_pcs: Optional[int] = None,
     log: bool = False,
     show_cumulative: bool = True,
-    figsize: Tuple[int, int] = (700, 600),
+    figsize: tuple[int, int] = (700, 600),
     title: Optional[str] = None,
     **kwargs,
 ) -> "go.Figure":
@@ -3105,7 +3105,7 @@ def motif_abundance_pca_variance(
         Use log scale for the variance-ratio axis.
     show_cumulative : bool, default=True
         Overlay a cumulative-variance line on the same y-axis.
-    figsize : Tuple[int, int], default=(700, 500)
+    figsize : tuple[int, int], default=(700, 500)
         Figure size in pixels.
     title : Optional[str], default=None
         Plot title.
@@ -3190,7 +3190,7 @@ def copy_number_violin(
     motif: str | int | None = None,
     show_box: bool = True,
     show_points: bool = False,
-    figsize: Tuple[int, int] = (500, 500),
+    figsize: tuple[int, int] = (500, 500),
     **kwargs,
 ) -> "go.Figure":
     """Plot copy-number distribution across sample groups as a violin plot.
@@ -3212,7 +3212,7 @@ def copy_number_violin(
         Whether to overlay a mini box plot inside each violin.
     show_points : bool, default=False
         Whether to overlay individual data points on each violin.
-    figsize : Tuple[int, int], default=(600, 400)
+    figsize : tuple[int, int], default=(600, 400)
         Figure size in pixels.
     **kwargs
         Additional arguments passed to ``fig.update_layout()``.
@@ -3340,7 +3340,7 @@ def copy_number_stacked_violin(
     show_box: bool = False,
     show_points: bool = False,
     row_height: int = 80,
-    figsize: Tuple[int, int] | None = None,
+    figsize: tuple[int, int] | None = None,
     **kwargs,
 ) -> "go.Figure":
     """Plot copy-number distributions for multiple motifs as stacked violins.
@@ -3377,7 +3377,7 @@ def copy_number_stacked_violin(
         Whether to overlay individual data points on each violin.
     row_height : int, default=80
         Height in pixels allocated to each motif row.
-    figsize : Tuple[int, int] | None, default=None
+    figsize : tuple[int, int] | None, default=None
         Figure size ``(width, height)`` in pixels.  If ``None``, computed
         as ``(800, n_motifs * row_height + 120)``.
     **kwargs
@@ -3421,8 +3421,8 @@ def copy_number_stacked_violin(
         )
 
     # Resolve motif indices
-    motif_indices: List[int] = []
-    motif_labels: List[str] = []
+    motif_indices: list[int] = []
+    motif_labels: list[str] = []
     for m in motif_list:
         if isinstance(m, int):
             if m < 0 or m >= adata.n_vars:

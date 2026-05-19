@@ -5,3 +5,12 @@ src/vampire_tr.egg-info
 dist/
 build/
 .vscode/
+.pytest_cache/
+
+# Runtime temp directories
+.vampire/
+tests/.vampire/
+tests/*/.vampire/
+
+# Editor / assistant work directories
+.claude/

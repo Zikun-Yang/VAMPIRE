@@ -1,0 +1,5 @@
+target	query	distance	is_rc
+1	1	1	true
+0	1	1	false
+0	1	2	true
+0	0	3	true

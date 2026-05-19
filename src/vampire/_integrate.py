@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 # type hints
-from typing import List, Dict, Tuple, Any, Optional
+from typing import Any, Optional
 # basic packages for file operations, logging
 import csv
 import sys
@@ -146,8 +146,8 @@ def liftover_flank(
 """
 
 def anchor_tr(
-    r_sample: Dict[str, Any],
-    q_sample: Dict[str, Any],
+    r_sample: dict[str, Any],
+    q_sample: dict[str, Any],
     flank_len: int = 500
 ) -> pl.DataFrame:
     """

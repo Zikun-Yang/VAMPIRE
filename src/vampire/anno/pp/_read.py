@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from typing import List, Dict
 import polars as pl
 import logging
 import numba
@@ -48,7 +47,7 @@ BED_COLS = {
 
 def read_bedgraph(
     bedgraph_file: str,
-    columns: Dict[str, pl.DataType] = BEDGRAPH_COLS,
+    columns: dict[str, pl.DataType] = BEDGRAPH_COLS,
 ) -> pl.LazyFrame:
     """
     Lazily read a BEDGraph file using Polars.
@@ -74,7 +73,7 @@ def read_bedgraph(
         Path to the input BEDGraph file. Both uncompressed ``.bedgraph`` and
         gzip-compressed ``.bedgraph.gz`` files are supported.
 
-    columns : Dict[str, pl.DataType]
+    columns : dict[str, pl.DataType]
         Column names and data types to read.
 
     Returns
@@ -137,7 +136,7 @@ def read_bedgraph(
 
 def read_bed(
     bed_file: str,
-    columns: Dict[str, pl.DataType] = BED_COLS,
+    columns: dict[str, pl.DataType] = BED_COLS,
 ) -> pl.LazyFrame:
     """
     Read a BED or BED.GZ file using pysam and polars.
@@ -160,7 +159,7 @@ def read_bed(
         Path to the input BED file. Both uncompressed ``.bed`` and
         gzip-compressed ``.bed.gz`` files are supported.
 
-    columns : Dict[str, pl.DataType]
+    columns : dict[str, pl.DataType]
         Column names and data types to read.
 
     Returns
@@ -226,7 +225,7 @@ def read_indexed_bed(
     chrom: str, 
     start: int = 0, 
     end: int = 1e9,
-    columns: Dict[str, pl.DataType] = BED_COLS,
+    columns: dict[str, pl.DataType] = BED_COLS,
 ) -> pl.LazyFrame:
     """
     Read a indexed BED.GZ file using pysam and polars.
@@ -259,7 +258,7 @@ def read_indexed_bed(
     end : int
         End coordinate of a region to read. Default is 1e9.
 
-    columns : Dict[str, pl.DataType]
+    columns : dict[str, pl.DataType]
         Column names and data types to read.
 
     Returns
@@ -390,9 +389,9 @@ def read_anno(
 
     uns:
         Unstructured genomic annotations (not aligned to X)
-        - sequence : Dict[str, str]
-        - motif_array : Dict[str, List[str]]
-        - orientation_array : Dict[str, List[str]]
+        - sequence : dict[str, str]
+        - motif_array : dict[str, list[str]]
+        - orientation_array : dict[str, list[str]]
     """
     import pyarrow
     import numpy as np
@@ -429,7 +428,7 @@ def read_anno(
     if use_raw:
         anno_df, concise_df, motif_df, dist_df = _remake_results(anno_df, concise_df, motif_df, dist_df)
 
-    chrom_order: List[str] = anno_df["chrom"].unique(maintain_order=True).to_list()
+    chrom_order: list[str] = anno_df["chrom"].unique(maintain_order=True).to_list()
     order_df: pl.DataFrame = pl.DataFrame({
         "chrom": chrom_order,
         "order": range(len(chrom_order))
@@ -463,11 +462,11 @@ def read_anno(
         .set_index("id")
     )
     var["label"] = var["label"].astype("category")
-    motif_order: List[str] = var.index
+    motif_order: list[str] = var.index
     logger.debug("var dataframe is created")
 
     # make X matrix (represent the count of motif in each sample)
-    motif2length: Dict[str, int] = dict(zip(var.index, var["motif_length"]))
+    motif2length: dict[str, int] = dict(zip(var.index, var["motif_length"]))
     anno_df: pl.DataFrame = anno_df.with_columns(
         pl.col("motif")
         .cast(pl.Utf8)
@@ -485,7 +484,7 @@ def read_anno(
         .pivot(
             values="copy_number",
             index="chrom",
-            columns="motif",
+            on="motif",
             aggregate_function="sum"
         )
         .fill_null(0)
@@ -507,24 +506,24 @@ def read_anno(
         anno_df
         .group_by("chrom")
         .agg(
-            pl.col("sequence").str.concat("")
+            pl.col("sequence").str.join("")
         )
     )
-    seq_dict: Dict[str, str] = dict(zip(seq_df["chrom"], seq_df["sequence"]))
+    seq_dict: dict[str, str] = dict(zip(seq_df["chrom"], seq_df["sequence"]))
     adata.uns["sequence"] = seq_dict
     del seq_dict
     logger.debug("added .uns['sequence']")
 
     # make uns metadata - motif_array
-    motif_array_dict: Dict[str, str] = dict(zip(concise_df["chrom"], concise_df["motif"])) # {"sample1" : "0,1,0,3,4"}
-    motif_array_dict: Dict[str, List[str]] = {c: motif_array_dict[c].split(",") for c in adata.obs.index} # {"sample1" : ["0", "1", "0", "3" ,"4"]}
+    motif_array_dict: dict[str, str] = dict(zip(concise_df["chrom"], concise_df["motif"])) # {"sample1" : "0,1,0,3,4"}
+    motif_array_dict: dict[str, list[str]] = {c: motif_array_dict[c].split(",") for c in adata.obs.index} # {"sample1" : ["0", "1", "0", "3" ,"4"]}
     adata.uns["motif_array"] = motif_array_dict
     del motif_array_dict
     logger.debug("added .uns['motif_array']")
 
     # make uns metadata - orientation_array
-    orientation_array_dict: Dict[str, str] = dict(zip(concise_df["chrom"], concise_df["orientation"])) # {"sample1" : "+,+,-,-,+"}
-    orientation_array_dict: Dict[str, List[str]] = {c: orientation_array_dict[c].split(",") for c in adata.obs.index} # {"sample1" : ["+", "+", "-", "-" ,"+"]}
+    orientation_array_dict: dict[str, str] = dict(zip(concise_df["chrom"], concise_df["orientation"])) # {"sample1" : "+,+,-,-,+"}
+    orientation_array_dict: dict[str, list[str]] = {c: orientation_array_dict[c].split(",") for c in adata.obs.index} # {"sample1" : ["+", "+", "-", "-" ,"+"]}
     adata.uns["orientation_array"] = orientation_array_dict
     del orientation_array_dict
     logger.debug("added .uns['orientation_array']")
@@ -553,7 +552,7 @@ def _remake_results(
     concise_df: pl.DataFrame,
     motif_df: pl.DataFrame,
     dist_df: pl.DataFrame,
-) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
     calculate results based on the raw sequences
     """
@@ -562,8 +561,8 @@ def _remake_results(
         get_copy_number
     )
 
-    id2motif: Dict[int, str] = dict(zip(motif_df["id"], motif_df["motif"]))
-    id2len: Dict[int, int] = {motif_id: len(motif) for motif_id, motif in id2motif.items()}
+    id2motif: dict[int, str] = dict(zip(motif_df["id"], motif_df["motif"]))
+    id2len: dict[int, int] = {motif_id: len(motif) for motif_id, motif in id2motif.items()}
 
     # add copy number information
     anno_df = anno_df.with_columns(
@@ -605,17 +604,17 @@ def _remake_results(
         .select(["id", "motif", "copyNumber", "label"])
     )
     # make *.dist.tsv
-    id2motif: Dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(row["motif"]) for row in motif_df.iter_rows(named=True)}
-    id2motif_rc: Dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(_rc(row["motif"])) for row in motif_df.iter_rows(named=True)}
+    id2motif: dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(row["motif"]) for row in motif_df.iter_rows(named=True)}
+    id2motif_rc: dict[int, np.ndarray] = {row["id"]: encode_seq_to_array(_rc(row["motif"])) for row in motif_df.iter_rows(named=True)}
     motif_num: int = len(id2motif)
-    rows: List[Dict] = [{
+    rows: list[dict] = [{
         "target": i,
         "query": j,
         "distance": _calculate_edit_distance_between_motifs(id2motif[i], id2motif[j]),
         "sum_copyNumber": motif_df["copyNumber"][i] + motif_df["copyNumber"][j],
         "is_rc": False
     } for i in range(motif_num) for j in range(i + 1, motif_num)]
-    rows_rc: List[Dict] = [{
+    rows_rc: list[dict] = [{
         "target": i,
         "query": j,
         "distance": _calculate_edit_distance_between_motifs(id2motif[i], id2motif_rc[j]),
@@ -674,7 +673,7 @@ def _banded_dp_align(
     align_to_end: bool = False,
     anchor_row: int = -1,
     compare_row: int = -1,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
         Inputs:
             seq: np.ndarray, sequence
@@ -842,7 +841,7 @@ def _traceback_banded_roll_motif(
     m: int,
     seq: np.ndarray,
     motif: np.ndarray,
-) -> Tuple[List[str], int, int]:
+) -> tuple[list[str], int, int]:
     """
     Inputs:
         trace_M: np.ndarray, traceback matrix for match / mismatch
@@ -854,7 +853,7 @@ def _traceback_banded_roll_motif(
         seq: np.ndarray, target sequence
         motif: np.ndarray, query motif
     Outputs:
-        ops: List[str], atomic operations: '=', 'X', 'I', 'D', '/'
+        ops: list[str], atomic operations: '=', 'X', 'I', 'D', '/'
         start_i: int, starting position in seq (1-based DP index; 0 means start from beginning)
         start_j: int, starting position in motif (0-based index)
     Notes:
@@ -863,7 +862,7 @@ def _traceback_banded_roll_motif(
     i, j = best_i, best_j
     state = 0
 
-    ops: List[str] = []
+    ops: list[str] = []
 
     while i > 0: # index of seq, 1-based
         if state == 0:  # M
