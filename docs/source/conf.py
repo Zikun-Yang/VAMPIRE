@@ -134,7 +134,7 @@ html_theme_options = {
 }
 
 # -- Options for turtorials -------------------------------------------------
-nb_execution_mode = "cache"
+nb_execution_mode = "off"
 
 # -- Options for plot -------------------------------------------------------
 
