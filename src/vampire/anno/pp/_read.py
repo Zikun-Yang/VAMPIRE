@@ -552,7 +552,7 @@ def _remake_results(
     concise_df: pl.DataFrame,
     motif_df: pl.DataFrame,
     dist_df: pl.DataFrame,
-) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
     calculate results based on the raw sequences
     """
@@ -673,7 +673,7 @@ def _banded_dp_align(
     align_to_end: bool = False,
     anchor_row: int = -1,
     compare_row: int = -1,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
         Inputs:
             seq: np.ndarray, sequence
@@ -841,7 +841,7 @@ def _traceback_banded_roll_motif(
     m: int,
     seq: np.ndarray,
     motif: np.ndarray,
-) -> Tuple[list[str], int, int]:
+) -> tuple[list[str], int, int]:
     """
     Inputs:
         trace_M: np.ndarray, traceback matrix for match / mismatch
