@@ -62,7 +62,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://zikun-yang.github.io/VAMPIRE_Cookbook/"
+Homepage = "https://vampire-tr.readthedocs.io/en/latest/"
 
 [project.scripts]
 vampire = "vampire.main:main"
