@@ -31,7 +31,7 @@ Install VAMPIRE using pip:
 $ pip install --pre vampire-tr
 ```
 
-> **Note for preview releases:** VAMPIRE `0.4.x` is currently in alpha (`0.4.0a1`).
+> **Note for preview releases:** VAMPIRE `0.4.x` is currently in alpha (`0.4.0a2`).
 > You must use `--pre` so that pip installs the preview version instead of the
 > latest stable `0.3.x` release.
 :::
