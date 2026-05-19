@@ -66,5 +66,5 @@
    :nosignatures:
    :toctree: ../generated/
 
-   trackplot
+   tracksplot
 ```

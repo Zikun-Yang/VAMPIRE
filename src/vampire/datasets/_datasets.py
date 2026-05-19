@@ -1,9 +1,27 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import pooch
+
 if TYPE_CHECKING:
     from pathlib import Path
     import anndata as ad
+
+# ---------------------------------------------------------------------------
+# Remote example datasets (downloaded on demand via pooch)
+# ---------------------------------------------------------------------------
+# TODO: Upload data files to a GitHub Release and fill in base_url + hashes.
+# Then replace the placeholder base_url below with:
+#   "https://github.com/Zikun-Yang/VAMPIRE/releases/download/v0.4.0a2/"
+# ---------------------------------------------------------------------------
+_DATA_FETCHER = pooch.create(
+    path=pooch.os_cache("vampire"),
+    base_url="",  # <-- FILL IN after uploading to GitHub Release
+    registry={
+        # "chm13_cen1_tracks.pkl": "sha256:...",  # <-- FILL IN hash after upload
+    },
+)
+
 
 def _get_data_path(filename: str) -> Path:
     """Return path to bundled data file."""
@@ -33,7 +51,10 @@ def wdr7_hprc() -> ad.AnnData:
     Load 69 bp VNTR locus in the intron of the gene WDR7 among the 94 HPRC samples and T2T-CHM13v2.0.
     The coordinates on T2T-CHM13v2.0 are `chr18:57,226,379-57,227,527`.
 
-    This dataset contains TODO.
+    This dataset contains annotations of a 69-bp motif VNTR locus (`chr18:57,226,379-57,227,527` in T2T-CHM13v2.0) 
+    located within an intron of the *`WDR7`* gene across 95 human haplotype assemblies, 
+    including 47 individuals from Phase 1 of the `Human Pangenome Reference Consortium (HPRC)` and 
+    the `T2T-CHM13v2.0` reference genome.
 
     Returns
     -------
@@ -45,3 +66,35 @@ def wdr7_hprc() -> ad.AnnData:
 
     path = _get_data_path("wdr7_hprc.h5ad")
     return ad.read_h5ad(path)
+
+
+def chm13_cen1_tracks() -> list[dict]:
+    """
+    Load example tracks for the T2T-CHM13 centromere 1 region.
+
+    This dataset is intended for demonstrating :func:`vampire.anno.pl.tracksplot`.
+    It contains a list of track configuration dictionaries (bedgraph, bed, heatmap)
+    covering the chm13_chr1 centromeric HOR array region.
+
+    The data is downloaded on first use and cached under
+    ``~/.cache/vampire/`` via `pooch`.
+
+    Returns
+    -------
+    list[dict]
+        List of track dicts ready to pass to :func:`vampire.anno.pl.tracksplot`.
+
+    Examples
+    --------
+    >>> import vampire as vp
+    >>> tracks = vp.datasets.chm13_cen1_tracks()
+    >>> fig = vp.anno.pl.tracksplot(tracks, "chm13_chr1:121119216-127324115")
+    """
+    import pickle
+
+    path = _DATA_FETCHER.fetch("chm13_cen1_tracks.pkl")
+
+    with open(path, "rb") as f:
+        tracks = pickle.load(f)
+
+    return tracks

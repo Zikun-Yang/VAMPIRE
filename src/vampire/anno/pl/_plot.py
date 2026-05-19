@@ -140,10 +140,10 @@ def _build_element_colormap(
 
 """
 #
-# trackplot function
+# tracksplot function
 #
 """
-def trackplot(
+def tracksplot(
     tracks: list,
     region: str,
     title: str = "",
@@ -235,11 +235,11 @@ def trackplot(
     ...     {"name": "Coverage", "type": "bedgraph", "data": df1},
     ...     {"name": "Genes", "type": "bed", "data": df2}
     ... ]
-    >>> fig = vp.anno.pl.trackplot(tracks, "chr1:1000-5000", figsize=(1000, 300))
+    >>> fig = vp.anno.pl.tracksplot(tracks, "chr1:1000-5000", figsize=(1000, 300))
 
     .. raw:: html
 
-        <iframe src="/_static/plots/anno/pl/trackplot.html"
+        <iframe src="/_static/plots/anno/pl/tracksplot.html"
                 width="100%"
                 height="650"
                 style="border:0;">
@@ -1226,7 +1226,7 @@ def waterfall(
     ...     figsize = (600, 800),
     ...     sample_order = sample_order,
     ...     track_name_dx = -0.01
-    ...     # kwargs for vp.anno.pl.trackplot()
+    ...     # kwargs for vp.anno.pl.tracksplot()
     ...     font = dict(size=8),
     ...     margin = dict(l=120), # show
     ... )
@@ -1327,7 +1327,7 @@ def waterfall(
         # each track needs enough vertical space for bed rectangles and annotations;
         # tighter than before to avoid excessive sparsity
         min_track_height = font_size * 1.6
-        # margins in trackplot: top=40, bottom=55
+        # margins in tracksplot: top=40, bottom=55
         height = int(n_tracks * min_track_height + 40 + 55)
         height = max(height, 300)
         logger.debug(f"automatically adjust figure height to {height}")
@@ -1346,7 +1346,7 @@ def waterfall(
         for td in track_list:
             td["draw_baseline"] = True
 
-    fig: go.Figure = trackplot(
+    fig: go.Figure = tracksplot(
         tracks = track_list,
         region = f"seq:0-{max_x}",
         title = "",
@@ -1459,16 +1459,15 @@ def waterfall_legend(
         ))
 
         # label text, left-aligned
-        fig.add_trace(go.Scatter(
-            x=[1.5],
-            y=[y_pos + 0.5],
-            text=[str(element)],
-            mode="text",
-            textposition="middle right",
-            textfont=dict(size=14),
-            showlegend=False,
-            hoverinfo="skip",
-        ))
+        fig.add_annotation(
+            x=1.5,
+            y=y_pos + 0.5,
+            text=str(element),
+            showarrow=False,
+            xanchor="left",
+            yanchor="middle",
+            font=dict(size=DEFAULT_FONT_SIZE),
+        )
 
     ymax = max(y_pos_list) + 1
     ymin = min(y_pos_list)
