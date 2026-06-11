@@ -37,6 +37,7 @@ vampire scan -t 16 --seq-win-size 10000000 genome.fa results/scan
 | `--debug` | `False` | Output debug info and keep temporary files |
 | `--seq-win-size` | `5000000` | Window sequence size for scanning (bp) |
 | `--seq-ovlp-size` | `100000` | Overlap sequence size between consecutive windows (bp) |
+| `-j, --job` | `None` | Job directory for temporary files |
 
 ### Candidate Finding Options
 

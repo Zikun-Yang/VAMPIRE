@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vampire-tr"
-version = "0.4.0a2"
+version = "0.4.0"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -37,6 +37,7 @@ dependencies = [
     "pyarrow>=15.0",
     "anndata>=0.10",
     "plotly>=5.20",
+    "kaleido==0.2.1",
     "numba>=0.59",
     "leidenalg>=0.11",
     "igraph>=1.0",

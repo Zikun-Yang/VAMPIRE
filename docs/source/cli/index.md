@@ -7,7 +7,6 @@ This section documents the command-line interface (CLI) subcommands provided by 
 :maxdepth: 1
 
 scan
-integrate
 anno
 generator
 evaluate

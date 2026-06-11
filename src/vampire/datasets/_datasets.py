@@ -7,21 +7,16 @@ if TYPE_CHECKING:
     from pathlib import Path
     import anndata as ad
 
-# ---------------------------------------------------------------------------
-# Remote example datasets (downloaded on demand via pooch)
-# ---------------------------------------------------------------------------
-# TODO: Upload data files to a GitHub Release and fill in base_url + hashes.
-# Then replace the placeholder base_url below with:
-#   "https://github.com/Zikun-Yang/VAMPIRE/releases/download/v0.4.0a2/"
-# ---------------------------------------------------------------------------
 _DATA_FETCHER = pooch.create(
     path=pooch.os_cache("vampire"),
-    base_url="",  # <-- FILL IN after uploading to GitHub Release
+    base_url=(
+        "https://github.com/Zikun-Yang/VAMPIRE/"
+        "releases/download/v0.4.0a2/"
+    ),
     registry={
-        # "chm13_cen1_tracks.pkl": "sha256:...",  # <-- FILL IN hash after upload
+        "chm13_cen1_tracks.pkl": "sha256:ffa6c087468d63f3259da10e2500e9f288973737816d2b8ed304c4ea0eb32b57",  # <-- FILL IN hash after upload
     },
 )
-
 
 def _get_data_path(filename: str) -> Path:
     """Return path to bundled data file."""

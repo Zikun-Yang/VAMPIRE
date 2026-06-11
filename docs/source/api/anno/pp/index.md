@@ -1,4 +1,4 @@
-# anno preprocessing `anno.pp`
+# anno preprocessing module `anno.pp`
 
 ```{eval-rst}
 .. module:: vampire.anno.pp
@@ -8,8 +8,7 @@
 .. currentmodule:: vampire.anno.pp
 ```
 
-## Read
-
+## Basic File Reading
 ```{eval-rst}
 .. autosummary::
    :nosignatures:
@@ -18,5 +17,13 @@
    read_bed
    read_bedgraph
    read_indexed_bed
+```
+
+## `anno` Output Reading
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
    read_anno
 ```

@@ -1,7 +1,8 @@
-# Basic tutorials
+# Basics
 
 ```{toctree}
 :maxdepth: 1
 
-basic_anno_turtorial
+wdr7_analysis
+cen1_analysis
 ```

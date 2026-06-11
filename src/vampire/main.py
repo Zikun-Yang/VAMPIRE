@@ -65,6 +65,7 @@ def main():
     # ------------------------------------------------------------
     # integrate
     # ------------------------------------------------------------
+    """
     parser_integrate = subparsers.add_parser("integrate",
                                         description="VAMPIRE integrate\n"
                                                     "Usage: vampire integrate [options] <input.tsv> <output_prefix>\n"
@@ -94,6 +95,7 @@ def main():
     # Output Options
     output_group = parser_integrate.add_argument_group("Output Options")
     output_group.add_argument("--redo", action="store_true", help="Overwrite existing results [False]")
+    """
 
     # ------------------------------------------------------------
     # anno

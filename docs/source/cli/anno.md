@@ -41,10 +41,11 @@ vampire anno -m /path/to/motifs.tsv input.fa output/prefix
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-t, --thread, --threads` | `4` | Number of threads |
-| `--auto` | `False` | Automatically estimate k-mer size and related parameters |
+| `--no-auto` | `False` | Skip automatic estimation of k-mer size and related parameters |
 | `--debug` | `False` | Output debug info and keep temporary files |
 | `--seq-win-size` | `5000` | Parallel window size for annotation (bp) |
 | `--seq-ovlp-size` | `1000` | Overlap between consecutive windows (bp) |
+| `-j, --job` | `None` | Job directory for temporary files |
 | `-r, --resource` | `50` | Memory limit (GB) |
 
 ### Decomposition Options
@@ -54,8 +55,8 @@ vampire anno -m /path/to/motifs.tsv input.fa output/prefix
 | `-k, --ksize` | `9` | k-mer size for building the De Bruijn graph |
 | `-m, --motif` | `base` | Reference motif set path. Use `base` for the built-in default. |
 | `-n, --motifnum` | `30` | Maximum number of motifs to discover |
-| `--abud-threshold` | `0.01` | Minimum edge weight threshold relative to the top edge weight in the De Bruijn graph |
-| `--abud-min` | `3` | Minimum absolute edge weight in the De Bruijn graph |
+| `--kratio` | `0.01` | Minimum edge weight threshold relative to the top edge weight in the De Bruijn graph |
+| `--kmin` | `3` | Minimum absolute edge weight in the De Bruijn graph |
 | `--no-denovo` | `False` | Skip de novo motif discovery; annotate using only the reference motif set |
 
 ### Annotation Options
@@ -63,6 +64,7 @@ vampire anno -m /path/to/motifs.tsv input.fa output/prefix
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-f, --force` | `False` | Force-add reference motifs into the annotation module |
+| `--reverse` | `False` | Align motif on the reverse strand |
 | `--annotation-min-similarity` | `0.6` | Minimum motif similarity required for annotation |
 | `--finding-min-similarity` | `0.8` | Minimum motif similarity to match a query against the reference motif set |
 | `--match-score` | `2` | Match score for alignment |
@@ -75,7 +77,7 @@ vampire anno -m /path/to/motifs.tsv input.fa output/prefix
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--skip-report` | `False` | Skip HTML report generation |
-| `-s, --min-score` | `5` | Minimum row score for the concise output table (`*.concise.tsv`) |
+| `--skip-h5ad` | `False` | Skip h5ad generation |
 
 ## Output Files
 

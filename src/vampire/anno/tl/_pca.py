@@ -16,7 +16,8 @@ def motif_abundance_pca(
     clr_transform: bool = False,
     n_components: int = 10,
 ) -> ad.AnnData:
-    """PCA on motif abundance percentage vectors.
+    """
+    PCA on motif abundance percentage vectors.
 
     Row-normalises the motif abundance matrix to percentages, optionally
     applies a centered log-ratio (CLR) transform, then performs PCA.
@@ -49,7 +50,8 @@ def motif_abundance_pca(
     Examples
     --------
     >>> import vampire as vp
-    >>> adata = vp.anno.tl.motif_abundance_pca(adata)
+    >>> adata = vp.datasets.wdr7_hprc()
+    >>> vp.anno.tl.motif_abundance_pca(adata)
     """
     import numpy as np
     from sklearn.decomposition import PCA
