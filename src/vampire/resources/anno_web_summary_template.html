@@ -503,12 +503,36 @@
                                         <td class="table-value">$AUTO_MODE$</td>
                                     </tr>
                                     <tr>
+                                        <td class="table-key">No-de-novo Mode</td>
+                                        <td class="table-value">$NO_DENOVO_MODE$</td>
+                                    </tr>
+                                    <tr>
                                         <td class="table-key">Ksize</td>
                                         <td class="table-value">$KSIZE$</td>
                                     </tr>
                                     <tr>
+                                        <td class="table-key">Kratio</td>
+                                        <td class="table-value">$KRATIO$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Kmin</td>
+                                        <td class="table-value">$KMIN$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Lmin</td>
+                                        <td class="table-value">$LMIN$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Lmax</td>
+                                    <td class="table-value">$LMAX$</td>
+                                    </tr>
+                                    <tr>
                                         <td class="table-key">Alignment Parameters</td>
                                         <td class="table-value">$ALIGNMENT_PARAMETERS$</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="table-key">Align to Reverse Strand</td>
+                                        <td class="table-value">$REVERSE$</td>
                                     </tr>
                                     <tr>
                                         <td class="table-key">Total Running Time</td>
@@ -585,7 +609,6 @@
     </div>
 
 
-    
     <script>
         document.getElementById('copyright-year').textContent = new Date().getFullYear();
 
@@ -726,6 +749,291 @@
             document.querySelectorAll('.help-text-container.show').forEach(h => h.classList.remove('show'));
         });
         
+        // ============================================================
+        // Responsive Plotly Chart Resizing with Aspect Ratio Preservation
+        // ============================================================
+
+        // Store aspect ratios and original font sizes for each plotly chart
+        const plotlyAspectRatios = new Map();
+        const plotlyOriginalFonts = new Map();
+        const plotlyOriginalMargins = new Map();
+
+        // Helper to safely get nested property value with fallback
+        function getNestedValue(obj, path, defaultValue) {
+            if (!obj || typeof obj !== 'object') return defaultValue;
+            const parts = path.split('.');
+            let current = obj;
+            for (let i = 0; i < parts.length; i++) {
+                if (current === undefined || current === null) return defaultValue;
+                current = current[parts[i]];
+            }
+            return (typeof current === 'number') ? current : defaultValue;
+        }
+
+        // Capture original font sizes from Plotly layout
+        function captureOriginalFonts(plotDiv) {
+            const layout = plotDiv.layout;
+            if (!layout) return null;
+
+            const fonts = {};
+
+            // Capture all common font locations with safe getters
+            fonts.title = getNestedValue(layout, 'title.font.size', 16);
+            fonts.xaxis_tick = getNestedValue(layout, 'xaxis.tickfont.size', 10);
+            fonts.xaxis_title = getNestedValue(layout, 'xaxis.title.font.size', 12);
+            fonts.yaxis_tick = getNestedValue(layout, 'yaxis.tickfont.size', 10);
+            fonts.yaxis_title = getNestedValue(layout, 'yaxis.title.font.size', 12);
+            fonts.legend = getNestedValue(layout, 'legend.font.size', 10);
+            fonts.global = getNestedValue(layout, 'font.size', 12);
+
+            // Capture annotation fonts if present
+            if (layout.annotations && layout.annotations.length > 0) {
+                fonts.annotation = layout.annotations[0].font?.size || 10;
+                fonts.annotations_count = layout.annotations.length;
+            }
+
+            plotlyOriginalFonts.set(plotDiv.id, fonts);
+            return fonts;
+        }
+
+        // Capture original margins from Plotly layout
+        function captureOriginalMargins(plotDiv) {
+            const layout = plotDiv.layout;
+            if (!layout || !layout.margin) {
+                const defaultMargins = { l: 50, r: 30, t: 50, b: 30 };
+                plotlyOriginalMargins.set(plotDiv.id, defaultMargins);
+                return defaultMargins;
+            }
+
+            const margins = {
+                l: layout.margin.l || 50,
+                r: layout.margin.r || 30,
+                t: layout.margin.t || 50,
+                b: layout.margin.b || 30
+            };
+
+            plotlyOriginalMargins.set(plotDiv.id, margins);
+            return margins;
+        }
+
+        // Resize a single Plotly chart with font and margin scaling
+        function resizeSinglePlotlyChart(plotDiv, container, aspectRatio) {
+            const newWidth = container.clientWidth;
+            const newHeight = newWidth * aspectRatio;
+
+            // Calculate scale factor based on width ratio
+            const originalWidth = plotDiv.layout.width || 1000;
+            let scaleFactor = newWidth / originalWidth;
+
+            // Clamp scale factor to prevent fonts from becoming too small or too large
+            scaleFactor = Math.max(scaleFactor, 0.5);   // Minimum 50%
+            scaleFactor = Math.min(scaleFactor, 2.0);     // Maximum 200%
+
+            // Get or capture original fonts and margins
+            let fonts = plotlyOriginalFonts.get(plotDiv.id);
+            if (!fonts) {
+                fonts = captureOriginalFonts(plotDiv);
+            }
+
+            let margins = plotlyOriginalMargins.get(plotDiv.id);
+            if (!margins) {
+                margins = captureOriginalMargins(plotDiv);
+            }
+
+            // Build update object with scaled dimensions, fonts, and margins
+            const update = {
+                width: newWidth,
+                height: newHeight,
+                autosize: false,
+
+                // Scale title font
+                'title.font.size': Math.round(fonts.title * scaleFactor),
+
+                // Scale axis tick fonts
+                'xaxis.tickfont.size': Math.round(fonts.xaxis_tick * scaleFactor),
+                'yaxis.tickfont.size': Math.round(fonts.yaxis_tick * scaleFactor),
+
+                // Scale axis title fonts
+                'xaxis.title.font.size': Math.round(fonts.xaxis_title * scaleFactor),
+                'yaxis.title.font.size': Math.round(fonts.yaxis_title * scaleFactor),
+
+                // Scale legend font
+                'legend.font.size': Math.round(fonts.legend * scaleFactor),
+
+                // Scale global font
+                'font.size': Math.round(fonts.global * scaleFactor),
+
+                // Scale margins proportionally (with minimum values to prevent clipping)
+                'margin.l': Math.max(Math.round(margins.l * scaleFactor), 30),
+                'margin.r': Math.max(Math.round(margins.r * scaleFactor), 10),
+                'margin.t': Math.max(Math.round(margins.t * scaleFactor), 20),
+                'margin.b': Math.max(Math.round(margins.b * scaleFactor), 30)
+            };
+
+            // Scale annotation fonts if present
+            if (fonts.annotation && fonts.annotations_count) {
+                for (let i = 0; i < fonts.annotations_count; i++) {
+                    update[`annotations[${i}].font.size`] = Math.round(fonts.annotation * scaleFactor);
+                }
+            }
+
+            // Apply the update
+            Plotly.relayout(plotDiv, update);
+
+            // Sync container height to match chart
+            container.style.height = newHeight + 'px';
+        }
+
+        // Initialize responsive resizing for all existing Plotly charts
+        function initResponsivePlotlyCharts() {
+            const plotlyDivs = document.querySelectorAll('.js-plotly-plot');
+
+            plotlyDivs.forEach(plotDiv => {
+                // Extract original dimensions from Plotly layout
+                const layout = plotDiv.layout;
+                if (!layout) return;
+
+                const originalWidth = layout.width || 1000;
+                const originalHeight = layout.height || 600;
+                const aspectRatio = originalHeight / originalWidth;
+
+                // Store aspect ratio for this chart
+                plotlyAspectRatios.set(plotDiv.id, aspectRatio);
+
+                // Capture original fonts and margins
+                captureOriginalFonts(plotDiv);
+                captureOriginalMargins(plotDiv);
+
+                // Find the parent container (card-content or chart-container)
+                let container = plotDiv.closest('.card-content');
+                if (!container) {
+                    container = plotDiv.closest('.chart-container');
+                }
+                if (!container) {
+                    container = plotDiv.parentElement;
+                }
+
+                if (!container) return;
+
+                // Set container styles for responsive behavior
+                container.style.width = '100%';
+                container.style.height = 'auto';
+
+                // Perform initial resize with font scaling
+                resizeSinglePlotlyChart(plotDiv, container, aspectRatio);
+            });
+        }
+
+        // Resize all tracked Plotly charts
+        function resizeAllPlotlyCharts() {
+            plotlyAspectRatios.forEach((aspectRatio, plotId) => {
+                const plotDiv = document.getElementById(plotId);
+                if (!plotDiv) return;
+
+                let container = plotDiv.closest('.card-content');
+                if (!container) {
+                    container = plotDiv.closest('.chart-container');
+                }
+                if (!container) {
+                    container = plotDiv.parentElement;
+                }
+
+                if (!container) return;
+
+                resizeSinglePlotlyChart(plotDiv, container, aspectRatio);
+            });
+        }
+
+        // Observe container width changes for responsive resizing
+        const plotlyResizeObserver = new ResizeObserver((entries) => {
+            window.requestAnimationFrame(() => {
+                entries.forEach(entry => {
+                    const container = entry.target;
+                    const plotDiv = container.querySelector('.js-plotly-plot');
+
+                    if (!plotDiv) return;
+
+                    const aspectRatio = plotlyAspectRatios.get(plotDiv.id);
+                    if (!aspectRatio) return;
+
+                    resizeSinglePlotlyChart(plotDiv, container, aspectRatio);
+                });
+            });
+        });
+
+        // Setup ResizeObserver for a container
+        function observePlotlyContainer(container) {
+            if (container && container.querySelector('.js-plotly-plot')) {
+                plotlyResizeObserver.observe(container);
+            }
+        }
+
+        // Enhanced switchTab with Plotly aspect ratio and font scaling preservation
+        const originalSwitchTab = switchTab;
+        switchTab = function(tabName) {
+            originalSwitchTab(tabName);
+
+            // After tab switch, reinitialize responsive Plotly charts
+            setTimeout(() => {
+                initResponsivePlotlyCharts();
+
+                // Observe all card-content and chart-container elements in the active tab
+                const activeContent = document.getElementById(`tab-${tabName}-content`);
+                if (activeContent) {
+                    const containers = activeContent.querySelectorAll('.card-content, .chart-container');
+                    containers.forEach(observePlotlyContainer);
+                }
+            }, 150);
+        };
+
+        // Enhanced addChart with responsive sizing and font scaling
+        const originalAddChart = addChart;
+        addChart = function(title, chartData, chartId, tabName) {
+            originalAddChart(title, chartData, chartId, tabName);
+
+            // After chart is added, setup responsive resizing with font scaling
+            setTimeout(() => {
+                const newChartDiv = document.getElementById(chartId);
+                if (newChartDiv && newChartDiv.classList.contains('js-plotly-plot')) {
+                    const layout = newChartDiv.layout;
+                    if (layout) {
+                        const aspectRatio = (layout.height || 600) / (layout.width || 1000);
+                        plotlyAspectRatios.set(chartId, aspectRatio);
+
+                        // Capture original fonts and margins for the new chart
+                        captureOriginalFonts(newChartDiv);
+                        captureOriginalMargins(newChartDiv);
+
+                        let container = newChartDiv.closest('.card-content') || 
+                                        newChartDiv.closest('.chart-container') || 
+                                        newChartDiv.parentElement;
+
+                        if (container) {
+                            container.style.width = '100%';
+                            container.style.height = 'auto';
+                            resizeSinglePlotlyChart(newChartDiv, container, aspectRatio);
+                            observePlotlyContainer(container);
+                        }
+                    }
+                }
+            }, 200);
+        };
+
+        // Initialize on page load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                setTimeout(initResponsivePlotlyCharts, 100);
+            });
+        } else {
+            setTimeout(initResponsivePlotlyCharts, 100);
+        }
+
+        // Also handle window resize as fallback
+        window.addEventListener('resize', () => {
+            window.requestAnimationFrame(resizeAllPlotlyCharts);
+        });
+
     </script>
+
 </body>
 </html>

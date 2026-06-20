@@ -222,8 +222,8 @@ def _get_categorical_colormap(
 
 
 def _save_figure(
-    fig: go.Figure, 
-    save: str | bool | None, 
+    fig: go.Figure,
+    save: str | bool | None,
     default_name: str
 ) -> None:
     """
@@ -236,9 +236,9 @@ def _save_figure(
     save: str | bool | None
         ``None`` or ``False`` — do nothing.
         ``True`` — save to ``<default_name>.pdf``.
-        ``str`` — if it ends with ``.pdf``, ``.png``, or ``.svg``, use it as the
-        full file path; otherwise prepend it to ``default_name`` (e.g.
-        ``save="prefix_"`` → ``prefix_<default_name>.pdf``).
+        ``str`` — if it ends with ``.pdf``, ``.png``, ``.svg``, or ``.html``,
+        use it as the full file path; otherwise prepend it to ``default_name``
+        (e.g. ``save="prefix_"`` → ``prefix_<default_name>.pdf``).
     default_name: str
         Base filename used when ``save`` is ``True`` or a prefix string.
     """
@@ -251,7 +251,7 @@ def _save_figure(
         path = f"{default_name}.pdf"
     elif isinstance(save, str):
         save_lower = save.lower()
-        if save_lower.endswith((".pdf", ".png", ".svg")):
+        if save_lower.endswith((".pdf", ".png", ".svg", ".html")):
             path = save
         else:
             path = f"{save}{default_name}.pdf"
@@ -259,6 +259,15 @@ def _save_figure(
         return
 
     ext = pathlib.Path(path).suffix.lstrip(".").lower()
+
+    # HTML is handled separately via write_html
+    if ext == "html":
+        try:
+            fig.write_html(path)
+        except Exception as e:
+            logger.warning("Failed to save figure to %s: %s", path, e)
+        return
+
     fmt = ext if ext in ("pdf", "png", "svg", "jpeg", "jpg", "webp") else "pdf"
     if fmt == "jpg":
         fmt = "jpeg"

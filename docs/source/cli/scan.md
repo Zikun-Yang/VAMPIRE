@@ -2,7 +2,7 @@
 
 Scan and annotate tandem repeats (TRs) across a genome or long sequences.
 
-This subcommand performs a genome-wide (or sequence-wide) scan to detect tandem repeat regions. It uses a multi-scale k-mer smoothness approach to identify candidate TR loci, followed by banded dynamic programming alignment to annotate period, copy number, and motif composition for each locus.
+This subcommand performs a genome-wide (or sequence-wide) scan to detect tandem repeat regions. It uses a multi-scale k-mer smoothness approach to identify candidate TR loci, followed by banded dynamic programming alignment to annotate period, copy number for each locus.
 
 ## Usage
 
@@ -10,15 +10,58 @@ This subcommand performs a genome-wide (or sequence-wide) scan to detect tandem 
 vampire scan [options] <input.fa> <output_prefix>
 ```
 
-## Example
+## Examples
 
 ```bash
-# Basic scan with default parameters
-vampire scan genome.fa results/genome_scan
+# Basic scan with 8 threads
+vampire scan -t 8 genome.fa genome_scan
 
-# Scan with more threads and custom window size
-vampire scan -t 16 --seq-win-size 10000000 genome.fa results/scan
+# Scan with custom alignment scoring parameters
+vampire scan --match-score 2 --mismatch-penalty 4 --gap-open-penalty 7 --gap-open-penalty 4 -s 40 genome.fa genome_scan
+
+# Output BED12 format with additional annotation columns
+vampire scan --format bed genome.fa genome_scan
+
+# Output secondary motifs when alignment score reaches 80% of the primary motif
+vampire scan --secondary 0.8 genome.fa genome_scan
 ```
+
+## Example run
+
+Below is a real run on human reference genome T2T-CHM13v2.0:
+
+Command:
+
+```bash
+vampire scan T2T-CHM13v2.0.fa T2T-CHM13v2.0_tr_scan
+```
+
+### Discovered TR `T2T-CHM13v2.0_tr_scan.tsv`
+
+The output format basically follows the TRF output specification, using 1-based, fully closed intervals for all coordinates
+
+| chrom | start |  end | period | copyNumber | consensusSize | percentMatches | percentIndels | score |   A |   C |   G |   T | entropy | motif  | sequence                                                                                                                                                                                                                                                                                                                                                                                                                      | cigar                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----- | ----: | ---: | -----: | ---------: | ------------: | -------------: | ------------: | ----: | --: | --: | --: | --: | ------: | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| chr1  |     2 | 2705 |      6 |      447.8 |             6 |             96 |             1 |  4547 |  31 |  52 |   1 |  16 |    1.52 | ACCCTA | ACCCTAAACCCTAACCCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCCTAAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTA | 6=/1=1I5=/4=1I2=/6=/6=/6=/6=/6=/4=1I2=/1=1I5=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/4=1I2=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/4=1D1=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/4=3I2=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/1=2D1=1D1=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/6=/5=1I1=/6=/6=/6=/6=/6=/6=/1D5=/6=/6=/6=/6=/6=/6=/6=/5=1I1=/5=1I1=/6=/6=/6=/6=/6=/6=/1X5=/1X5=/1X5=/1X5=/1X5=/6=/1X3=1D1=/3=1I1=1D1=/3=1I1=1D1=/3=1I1=1D1=/3=1I1=1D1=/3=1I1=1D1=/3=1I1=1D1=/6=/6=/6=/6=/6=/6=/4=1D1=/6=/6=/6=/6=/6=/6=/6=/4=2I2=/6=/6=/6=/6=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/4=1X1=/5=1I1=/6=/6=/6=/6=/6=/6=/6=/5=1I1=/6=/6=/6=/6=/6=/6=/5=1I1=/6=/6=/6=/6=/6=/6=/1D5=/6=/6=/6=/6=/6=/6=/1=1I5=/6=/6=/6=/6=/6=/6=/6=/6=/5=1I1=/6=/6=/6=/4=1D1X/5=1X/5=1X/5=1X/5=1X/5=1X/1I5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/6=/5=1X/6=/6=/6=/6=/6=/4=1D1=/4=1D1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/5=1X/6=/2=1X3=/6=/4=1I2=/6=/6=/6=/6=/6=/4=1I2=/6=/4=1I2=/1=1I5=/6=/6=/6=/6=/6=/6=/6=/1D5=/6=/6=/6=/6=/6=/6=/4=1I2=/6=/4=1I2=/6=/6=/6=/6=/6=/4=1I2=/6=/6=/6=/6=/6=/6=/4=1I2=/6=/4=1I2=/6=/6=/6=/6=/6=/4=1I2=/6=/6=/6=/6=/6=/6=/5= |
+| ...   |   ... |  ... |    ... |        ... |           ... |            ... |           ... |   ... | ... | ... | ... | ... |     ... | ...    | ...                                                                                                                                                                                                                                                                                                                                                                                                                           | ...                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+
+
+### Web summary `T2T-CHM13v2.0_tr_scan.web_summary.html`
+
+This interactive HTML report contains three tabs: `Summary`, `Distribution` and `Motif`.
+
+The `Summary` tab provides an overview of the tandem repeat (TR) scanning run, including the executed command, parameter settings, and key statistics. The "Smoothness Score" panel visualizes the distribution of k-mer smoothness scores across different k-mer sizes, indicating the proportion of genomic regions passing the periodicity threshold. The "Called Tandem Repeats" section reports the number of raw, polished, and final TR calls after successive filtering stages.
+
+![anno workflow](../_static/img/cli/scan_web_summary_p1.png) 
+
+The `Distribution` tab displays the genomic landscape of detected tandem repeats across all chromosomes. The interactive ideogram shows TR density as a fraction of each chromosome (TR Fraction), with red bars indicating repeat-rich regions, such as centromere regions. Users can toggle between different metrics (e.g., TR fration, median TR length, median motif length) to explore chromosome-specific TR distribution patterns.
+
+![anno workflow](../_static/img/cli/scan_web_summary_p2.png) 
+
+The `Motif` tab presents detailed characterization of the detected repeat motifs. Includes histograms of TR length/period and sequence entropy, bubble charts of enriched canonical motifs ranked by TR number or total copy number, and a sortable table of the largest tandem repeats by copy number.
+
+![anno workflow](../_static/img/cli/scan_web_summary_p3.png) 
 
 ## Arguments
 
@@ -72,5 +115,7 @@ vampire scan -t 16 --seq-win-size 10000000 genome.fa results/scan
 
 Results are written with the provided `<prefix>`:
 
-- `<prefix>.trf.tsv` — Main annotation table in TRF-like format
-- `<prefix>.report.html` — Interactive HTML report (unless `--skip-report` is set)
+- `<prefix>.tsv` — Main annotation table (TRF-like format by default; columns depend on `--format` and `--skip-cigar`)
+- `<prefix>.bed` — BED-format annotation, generated only when `--format bed` is set
+- `<prefix>.web_summary.html` — Interactive HTML report (unless `--skip-report` is set or no repeats are detected)
+- `<prefix>.log` — Run log

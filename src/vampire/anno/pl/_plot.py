@@ -1068,7 +1068,7 @@ def waterfall(
     colormap: dict[str, str] | list | str = "rainbow",
     deduplicate: bool = False,
     row_annotation: str | list[str] | dict[str, str] | dict[str, dict[str, str]] | None = None,
-    annotation_colormap: (
+    row_annotation_colormap: (
         dict[str, str] | str |
         dict[str, dict[str, str] | str] | None
     ) = None,
@@ -1129,7 +1129,7 @@ def waterfall(
           Each dimension is rendered as an independent annotation column.
         - ``None`` — no annotation drawn.
 
-    annotation_colormap : dict[str, str] | str | dict[str, dict[str, str] | str] | None, optional
+    row_annotation_colormap : dict[str, str] | str | dict[str, dict[str, str] | str] | None, optional
         Color mapping for ``row_annotation`` categories.
 
         - Non-nested values apply to **all** dimensions.
@@ -1311,16 +1311,26 @@ def waterfall(
         ori_filtered: list[str] = []
         color_filtered: list[str] = []
 
+        block_cn_list = adata.uns.get("block_copy_number", {}).get(sample, [])
+        if not isinstance(block_cn_list, list):
+            block_cn_list = list(block_cn_list)
+        cn_idx: int = 0
         for pos, (m, o) in enumerate(zip(motif_array, orientation_array)):
             if m == "-":
                 continue
             start_array.append(float(pos))
-            end_array.append(float(pos + 1))
+            if cn_idx < len(block_cn_list):
+                end_array.append(float(pos + block_cn_list[cn_idx]))
+            else:
+                end_array.append(float(pos + 1))
             motif_filtered.append(m)
             ori_filtered.append(o)
             color_filtered.append(mapped_colormap[m])
+            cn_idx += 1
 
-        if end_array:
+        # Old behavior: only the last block could be fractional. Kept as a
+        # fallback when per-block copy numbers are unavailable.
+        if end_array and not block_cn_list:
             total_cn: float = adata.obs.loc[adata.obs.index == sample, "copy_number"].iloc[0]
             end_array[-1] = start_array[-1] + total_cn - int(total_cn)
 
@@ -1473,7 +1483,11 @@ def waterfall(
             all_cats = sorted(set(
                 a for annos in track_anno_by_dim[dim_name] for a in annos
             ))
-            _, palette = _get_categorical_colormap(all_cats, annotation_colormap)
+            if isinstance(row_annotation_colormap, dict):
+                cur_colormap = row_annotation_colormap[dim_name]
+            else:
+                cur_colormap = row_annotation_colormap
+            _, palette = _get_categorical_colormap(all_cats, cur_colormap)
             dim_palettes[dim_name] = palette
 
         # Compute exact track height from the rendered figure
