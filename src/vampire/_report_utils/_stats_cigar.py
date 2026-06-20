@@ -94,8 +94,10 @@ def get_copy_number(cigar: str, m: int | None) -> float:
         elif op in ["=", "X", "D"]:
             last_copy_length += int(num)
             num = ""
-        elif op == "I":
+        elif op in ["I", "N"]:
             num = ""
+        else:
+            raise ValueError(f"op {op} is invalid!")
     
     if m == 0:
         return round(float(complete_num), 1)

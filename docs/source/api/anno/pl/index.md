@@ -1,4 +1,4 @@
-# anno plotting `anno.pl`
+# anno plotting module `anno.pl`
 
 ```{eval-rst}
 .. module:: vampire.anno.pl
@@ -30,14 +30,14 @@
    copy_number_stacked_violin
 ```
 
-## Motif Variation
+## Motif Variation Pattern
 ```{eval-rst}
 .. autosummary::
    :nosignatures:
    :toctree: ../generated/
 
    logo
-   logo_from_matrix
+   motif_msa
 ```
 
 ## Motif Abundance
@@ -46,25 +46,36 @@
    :nosignatures:
    :toctree: ../generated/
 
-   heatmap_from_matrix
    motif_abundance_heatmap
+   motif_abundance_pca
    motif_abundance_pca_variance
 ```
 
-## Haplotype Calling
+## Haplotype Clustering
 ```{eval-rst}
 .. autosummary::
    :nosignatures:
    :toctree: ../generated/
 
    haplotype_distance_heatmap
+   haplotype_leiden_res_scan
 ```
 
-## Multi-layer Genomic Visualization
+## Multi-track Genomic Visualization
 ```{eval-rst}
 .. autosummary::
    :nosignatures:
    :toctree: ../generated/
 
-   trackplot
+   tracksplot
+```
+
+## Basic Plot Utilities
+```{eval-rst}
+.. autosummary::
+   :nosignatures:
+   :toctree: ../generated/
+
+   logo_from_matrix
+   heatmap_from_matrix
 ```

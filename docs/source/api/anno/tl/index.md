@@ -1,4 +1,4 @@
-# anno tools `anno.tl`
+# anno tool module `anno.tl`
 
 ```{eval-rst}
 .. module:: vampire.anno.tl
@@ -15,7 +15,8 @@
    :nosignatures:
    :toctree: ../generated/
 
-   align
+   motif_msa
+   sample_msa
 ```
 
 ## Motif Abundance
@@ -37,4 +38,5 @@
 
    haplotype_neighbor
    haplotype_leiden
+   haplotype_leiden_res_scan
 ```

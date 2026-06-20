@@ -31,6 +31,8 @@ def tmp_anno_cfg(tmp_path):
             "motifnum": 30,
             "kratio": 0.01,
             "kmin": 3,
+            "lmin": -1,
+            "lmax": -1,
             "seq_win_size": 5000,
             "seq_ovlp_size": 1000,
             "resource": 50,

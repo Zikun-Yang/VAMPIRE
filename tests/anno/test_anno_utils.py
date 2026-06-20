@@ -1,6 +1,7 @@
 """Unit tests for pure utility functions in vampire._anno."""
 
 import numpy as np
+import polars as pl
 import pytest
 
 from vampire._anno import (
@@ -9,6 +10,7 @@ from vampire._anno import (
     calculate_phase_difference,
     calculate_edit_distance_between_motifs,
     split_ops,
+    _use_raw,
 )
 
 
@@ -124,3 +126,80 @@ class TestSplitOps:
         assert result[0][1] == 4
         assert result[1][0] == 5
         assert result[1][1] == 9
+
+
+class TestUseRaw:
+    """Tests for _use_raw."""
+
+    def _make_anno_df(self, rows):
+        return pl.DataFrame(
+            rows,
+            schema={
+                "chrom": pl.Utf8,
+                "length": pl.Int64,
+                "start": pl.Int64,
+                "end": pl.Int64,
+                "motif": pl.Int64,
+                "orientation": pl.Utf8,
+                "sequence": pl.Utf8,
+                "score": pl.Int64,
+                "cigar": pl.Utf8,
+            },
+        )
+
+    def _make_motif_df(self, rows):
+        return pl.DataFrame(
+            rows,
+            schema={"id": pl.Int64, "motif": pl.Utf8, "copyNumber": pl.Float64, "label": pl.Utf8},
+        )
+
+    def test_canonicalizes_and_deduplicates_rotations(self):
+        motif_df = self._make_motif_df(
+            [{"id": 0, "motif": "ATTGG", "copyNumber": 0.0, "label": "A"}]
+        )
+        anno_df = self._make_anno_df([
+            {"chrom": "s1", "length": 10, "start": 0, "end": 4, "motif": 0, "orientation": "+", "sequence": "ATTGG", "score": 10, "cigar": "5=/"},
+            {"chrom": "s1", "length": 10, "start": 5, "end": 9, "motif": 0, "orientation": "+", "sequence": "GGATT", "score": 10, "cigar": "5=/"},
+        ])
+        anno_out, concise_out, motif_out, dist_out = _use_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        )
+
+        assert motif_out.shape[0] == 1
+        assert motif_out.item(0, "motif") == "ATTGG"
+        assert motif_out.item(0, "copyNumber") == 2.0
+        assert motif_out.item(0, "label") == "A"
+        assert anno_out["cigar"].to_list() == ["5=/", "5=/"]
+        assert anno_out["copyNumber"].to_list() == [1.0, 1.0]
+
+    def test_reverse_complement_is_normalized(self):
+        motif_df = self._make_motif_df(
+            [{"id": 0, "motif": "ATTGG", "copyNumber": 0.0, "label": "B"}]
+        )
+        # rc("CCAAT") == "ATTGG"
+        anno_df = self._make_anno_df([
+            {"chrom": "s2", "length": 5, "start": 0, "end": 4, "motif": 0, "orientation": "-", "sequence": "CCAAT", "score": 10, "cigar": "5=/"},
+        ])
+        anno_out, concise_out, motif_out, dist_out = _use_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        )
+
+        assert motif_out.item(0, "motif") == "ATTGG"
+        assert motif_out.item(0, "label") == "B"
+
+    def test_gap_rows_preserved(self):
+        motif_df = self._make_motif_df(
+            [{"id": 0, "motif": "ATTGG", "copyNumber": 0.0, "label": "C"}]
+        )
+        anno_df = self._make_anno_df([
+            {"chrom": "s3", "length": 8, "start": 0, "end": 4, "motif": 0, "orientation": "+", "sequence": "ATTGG", "score": 10, "cigar": "5=/"},
+            {"chrom": "s3", "length": 8, "start": 5, "end": 7, "motif": None, "orientation": None, "sequence": "AAA", "score": -21, "cigar": "3N"},
+        ])
+        anno_out, concise_out, motif_out, dist_out = _use_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        )
+
+        gap_row = anno_out.filter(pl.col("motif").is_null()).row(0, named=True)
+        assert gap_row["cigar"] == "3N"
+        assert gap_row["copyNumber"] is None
+        assert motif_out.shape[0] == 1

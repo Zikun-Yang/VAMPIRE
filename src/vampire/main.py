@@ -65,6 +65,7 @@ def main():
     # ------------------------------------------------------------
     # integrate
     # ------------------------------------------------------------
+    """
     parser_integrate = subparsers.add_parser("integrate",
                                         description="VAMPIRE integrate\n"
                                                     "Usage: vampire integrate [options] <input.tsv> <output_prefix>\n"
@@ -94,6 +95,7 @@ def main():
     # Output Options
     output_group = parser_integrate.add_argument_group("Output Options")
     output_group.add_argument("--redo", action="store_true", help="Overwrite existing results [False]")
+    """
 
     # ------------------------------------------------------------
     # anno
@@ -125,9 +127,11 @@ def main():
     decompose_group = parser_anno.add_argument_group("Decomposition Options")
     decompose_group.add_argument("-k", "--ksize", type=int, default=9, help="k-mer size for building De Bruijn graph [9]")
     decompose_group.add_argument("-m", "--motif", type=str, default="base", help="Reference motif set path [base]")
-    decompose_group.add_argument("-n", "--motifnum", type=int, default=30, help="Maximum number of motifs [30]")
-    decompose_group.add_argument("--kratio", type=float, default=0.01, help="Minimum threshold compared with top edge weight [0.01]")
-    decompose_group.add_argument("--kmin", type=int, default=3, help="Minimum edge weight in De Bruijn graph [3]")
+    decompose_group.add_argument("-n", "--motifnum", type=int, default=100, help="Maximum number of motifs [100]")
+    decompose_group.add_argument("--kratio", type=float, default=0.00, help="Minimum threshold compared with top edge weight [0.00]")
+    decompose_group.add_argument("--kmin", type=int, default=1, help="Minimum edge weight in De Bruijn graph [1]")
+    decompose_group.add_argument("--lmin", type=int, default=-1, help="Minimum motif length [-1]")
+    decompose_group.add_argument("--lmax", type=int, default=-1, help="Maximum motif length [-1]")
     decompose_group.add_argument("--no-denovo", action="store_true", help="Do not de novo find motifs, use reference motifs to annotate [False]")
 
     # Annotation Options
@@ -135,14 +139,15 @@ def main():
     annotation_group.add_argument("-f", "--force", action="store_true", help="Add reference motifs into annotation module [False]")
     annotation_group.add_argument("--reverse", action="store_true", help="Align motif on the reverse strand [False]")
     annotation_group.add_argument("--annotation-min-similarity", type=float, default=0.6, help="Min motif similarity to annotate [0.6]")
-    annotation_group.add_argument("--finding-min-similarity", type=float, default=0.8, help="Min motif similarity to match a query in reference motif set [0.8]")
+    annotation_group.add_argument("--finding-min-similarity", type=float, default=0.5, help="Min motif similarity to match a query in reference motif set [0.5]")
     annotation_group.add_argument("--match-score", type=int, default=2, help="Match score for alignment [2]")
-    annotation_group.add_argument("--mismatch-penalty", type=int, default=7, help="Mismatch penalty for alignment [7]")
+    annotation_group.add_argument("--mismatch-penalty", type=int, default=4, help="Mismatch penalty for alignment [7]")
     annotation_group.add_argument("--gap-open-penalty", type=int, default=7, help="Gap open penalty for alignment [7]")
-    annotation_group.add_argument("--gap-extend-penalty", type=int, default=7, help="Gap extend penalty for alignment [7]")
+    annotation_group.add_argument("--gap-extend-penalty", type=int, default=4, help="Gap extend penalty for alignment [5]")
 
     # Output Options
     output_group = parser_anno.add_argument_group("Output Options")
+    output_group.add_argument("--use-raw", action="store_true", default=False, help="Output raw motif based on annotation without any post-processing [False]")
     output_group.add_argument("--skip-report", action="store_true", default=False, help="Skip HTML report generation [False]")
     output_group.add_argument("--skip-h5ad", action="store_true", default=False, help="Skip h5ad generation [False]")
 

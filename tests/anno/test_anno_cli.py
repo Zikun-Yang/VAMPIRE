@@ -130,3 +130,43 @@ class TestOutputStructure:
         df = pl.read_csv(f"{cfg['prefix']}.motif.tsv", separator="\t")
         required = {"id", "motif", "copyNumber", "label"}
         assert required.issubset(set(df.columns))
+<<<<<<< HEAD
+=======
+
+
+class TestPartialMotif:
+    """Tests that short internal gaps can be resolved as partial motif copies."""
+
+    def test_partial_copy_annotated(self, tmp_anno_cfg):
+        cfg = tmp_anno_cfg("004-5bp_partial.fa", ksize=5)
+        run_anno(cfg)
+
+        anno_df = pl.read_csv(f"{cfg['prefix']}.annotation.tsv", separator="\t")
+        # No N-gap rows should remain inside the TR region.
+        assert anno_df.filter(pl.col("cigar").str.contains("N")).shape[0] == 0
+
+        # The 4 bp segment should be annotated as a fractional partial copy.
+        partial_rows = anno_df.filter((pl.col("end") - pl.col("start") + 1) < 5)
+        assert partial_rows.shape[0] >= 1
+        partial = partial_rows.row(0, named=True)
+        assert partial["motif"] is not None
+        assert partial["cigar"] is not None
+
+        # The concise output should contain the fractional copy number.
+        concise_df = pl.read_csv(f"{cfg['prefix']}.concise.tsv", separator="\t")
+        total_cn = concise_df["copyNumber"][0]
+        assert 6.0 < total_cn <= 7.0  # 6 full + some partial contribution
+
+    def test_long_motif_partial_copy(self, tmp_anno_cfg):
+        cfg = tmp_anno_cfg("005-18bp_partial.fa", ksize=5)
+        run_anno(cfg)
+
+        anno_df = pl.read_csv(f"{cfg['prefix']}.annotation.tsv", separator="\t")
+        # The short AGAAGT segment should not remain as an N-gap.
+        assert anno_df.filter(pl.col("cigar").str.contains("N")).shape[0] == 0
+
+        # The region containing AGAAGT should be explained by the motif.
+        concise_df = pl.read_csv(f"{cfg['prefix']}.concise.tsv", separator="\t")
+        total_cn = concise_df["copyNumber"][0]
+        assert 6.0 <= total_cn <= 7.0
+>>>>>>> dev

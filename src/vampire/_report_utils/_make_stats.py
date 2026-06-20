@@ -110,8 +110,14 @@ def make_stats(params: dict) -> dict:
             copy_number_list: List[float] = adata.obs["copy_number"]
             anno_extra = {
                 "AUTO_MODE": not params["no_auto"],
+                "NO_DENOVO_MODE": params["no_denovo"],
                 "KSIZE": params["ksize"],
+                "KRATIO": params["kratio"],
+                "KMIN": params["kmin"],
+                "LMIN": params["lmin"],
+                "LMAX": params["lmax"],
                 "ALIGNMENT_PARAMETERS": f"{params['match_score']}, {params['mismatch_penalty']}, {params['gap_open_penalty']}, {params['gap_extend_penalty']}",
+                "REVERSE": params["reverse"],
                 "NUMBER_OF_SAMPLES": adata.obs.shape[0],
                 "NUMBER_OF_MOTIFS": adata.var.shape[0],
                 "MIN_COPY_NUMBER": copy_number_list.min(),
@@ -122,8 +128,8 @@ def make_stats(params: dict) -> dict:
                     vp.anno.pl.waterfall(
                         adata,
                         sample_order = sample_order,
-                        margin = dict(l=120),
-                        font = dict(size=8)
+                        font = dict(size=8),
+                        deduplicate = True,
                     )
                 ),
             }

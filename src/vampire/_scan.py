@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Iterator
 
+import os
 # data processing
 import numpy as np
 import polars as pl
@@ -747,6 +748,12 @@ def call_on_compressed(
     # calculate distance on compressed sequence
     dist = calculate_distance(compressed_seq, ksize, min(largest_confident_period, max_dist))
     del compressed_seq, compressed_counts
+
+    # save the distance array if needed
+    if SAVE_DISTANCE:
+        (Path(JOB_DIR) / "distance").mkdir(parents=True, exist_ok=True)
+        np.save(f"{JOB_DIR}/distance/{chrom}-{ksize}.npy", dist)
+
     log_dist = np.log(dist) # distance >= 1
     del dist
 
@@ -3077,6 +3084,8 @@ def run_scan(cfg: dict[str, Any]) -> None:
     SECONDARY_SCORE_RATIO = cfg["secondary"]
     global SKIP_CIGAR
     SKIP_CIGAR = cfg["skip_cigar"]
+    global SAVE_DISTANCE
+    SAVE_DISTANCE = os.getenv("VAMPIRE_SAVE_DISTANCE") == "1"
     global OPS_TABLE
     OPS_TABLE = np.full(256, -1, dtype=np.int8)
     OPS_TABLE[ord("=")] = 0
@@ -3086,11 +3095,11 @@ def run_scan(cfg: dict[str, Any]) -> None:
     OPS_TABLE[ord("D")] = 3
     
     if MATCH_SCORE < 0 or MISMATCH_PENALTY < 0 or GAP_OPEN_PENALTY < 0 or GAP_EXTEND_PENALTY < 0:
-        msg = f"Match score, mismatch penalty, gap open penalty, and gap extend penalty must be non-negative integers"
+        msg = "Match score, mismatch penalty, gap open penalty, and gap extend penalty must be non-negative integers"
         logger.error(f"ERROR: {msg}")
         raise ValueError(msg)
     if cfg["seq_win_size"] <= cfg["seq_ovlp_size"]:
-        msg = f"Sequence window size must be greater than overlap size"
+        msg = "Sequence window size must be greater than overlap size"
         logger.error(f"ERROR: {msg}")
         raise ValueError(msg)
 
