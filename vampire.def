@@ -3,7 +3,7 @@ From: ubuntu:22.04
 
 %labels
     Author Zikun-Yang
-    Version v0.4.0a1
+    Version v0.4.1
 
 %help
     VAMPIRE - tandem repeat motif annotation tool
@@ -13,10 +13,14 @@ From: ubuntu:22.04
         apptainer build vampire.sif vampire.def
 
       Chinese users (use Tsinghua mirrors for conda + pip):
-        export SINGULARITYENV_CONDA_MIRROR=cn
-        apptainer build vampire.sif vampire.def
-        # or with apptainer build args:
-        # apptainer build --build-arg CONDA_MIRROR=cn vampire.sif vampire.def
+        apptainer build --build-arg CONDA_MIRROR=cn vampire.sif vampire.def
+
+      Install a specific version:
+        apptainer build --build-arg VAMPIRE_VERSION=0.4.1 vampire.sif vampire.def
+
+%arguments
+    VAMPIRE_VERSION=""
+    CONDA_MIRROR=""
 
 %post
     set -e
@@ -46,7 +50,7 @@ From: ubuntu:22.04
 
     # Configure conda + pip channels with optional mirror support
     # Set CONDA_MIRROR=cn before building to use Tsinghua (TUNA) mirrors.
-    if [ "${CONDA_MIRROR:-}" = "cn" ]; then
+    if [ "{{ CONDA_MIRROR }}" = "cn" ]; then
         echo "==> Configuring Tsinghua (TUNA) mirrors for Chinese network"
         TUNA="https://mirrors.tuna.tsinghua.edu.cn/anaconda"
         /opt/conda/bin/conda config --remove-key channels || true
@@ -69,8 +73,12 @@ From: ubuntu:22.04
     # Install bioinformatics dependencies
     /opt/conda/bin/conda install -y mafft
 
-    # Install VAMPIRE (preview release; --pre is required for 0.4.x alphas)
-    /opt/conda/bin/pip install --root-user-action=ignore --pre vampire-tr
+    # Install VAMPIRE (specific version if provided, otherwise latest stable)
+    if [ -n "{{ VAMPIRE_VERSION }}" ]; then
+        /opt/conda/bin/pip install --root-user-action=ignore "vampire-tr=={{ VAMPIRE_VERSION }}"
+    else
+        /opt/conda/bin/pip install --root-user-action=ignore vampire-tr
+    fi
 
     # Clean up
     /opt/conda/bin/conda clean -afy
@@ -83,5 +91,5 @@ From: ubuntu:22.04
     export PYTHONUNBUFFERED=1
 
 %runscript
-    echo "VAMPIRE v0.4.0a1 (preview) - tandem repeat motif annotation"
+    echo "VAMPIRE v0.4.1 - tandem repeat motif annotation"
     exec "$@"
