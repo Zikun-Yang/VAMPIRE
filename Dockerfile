@@ -5,6 +5,8 @@ ARG CONDA_MIRROR
 
 ENV LANG=en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
+# Auto-accept Anaconda Terms of Service in non-interactive environments
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
 
 LABEL Author="Zikun-Yang"
 LABEL Version="v0.4.1"
@@ -30,9 +32,6 @@ RUN set -e && \
     bash /tmp/miniconda.sh -b -p /opt/conda && \
     rm /tmp/miniconda.sh && \
     export PATH="/opt/conda/bin:$PATH" && \
-    \
-    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
     \
     if [ "${CONDA_MIRROR}" = "cn" ]; then \
         echo "==> Configuring Tsinghua (TUNA) mirrors for Chinese network" && \
