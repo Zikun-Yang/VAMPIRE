@@ -31,6 +31,9 @@ RUN set -e && \
     rm /tmp/miniconda.sh && \
     export PATH="/opt/conda/bin:$PATH" && \
     \
+    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    \
     if [ "${CONDA_MIRROR}" = "cn" ]; then \
         echo "==> Configuring Tsinghua (TUNA) mirrors for Chinese network" && \
         TUNA="https://mirrors.tuna.tsinghua.edu.cn/anaconda" && \
