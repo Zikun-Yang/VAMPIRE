@@ -10,7 +10,7 @@ from vampire._anno import (
     calculate_phase_difference,
     calculate_edit_distance_between_motifs,
     split_ops,
-    _use_raw,
+    make_raw,
 )
 
 
@@ -128,8 +128,8 @@ class TestSplitOps:
         assert result[1][1] == 9
 
 
-class TestUseRaw:
-    """Tests for _use_raw."""
+class TestMakeRaw:
+    """Tests for make_raw."""
 
     def _make_anno_df(self, rows):
         return pl.DataFrame(
@@ -161,8 +161,8 @@ class TestUseRaw:
             {"chrom": "s1", "length": 10, "start": 0, "end": 4, "motif": 0, "orientation": "+", "sequence": "ATTGG", "score": 10, "cigar": "5=/"},
             {"chrom": "s1", "length": 10, "start": 5, "end": 9, "motif": 0, "orientation": "+", "sequence": "GGATT", "score": 10, "cigar": "5=/"},
         ])
-        anno_out, concise_out, motif_out, dist_out = _use_raw(
-            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        anno_out, concise_out, motif_out, dist_out = make_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame(), 2, 7, 7, 7
         )
 
         assert motif_out.shape[0] == 1
@@ -180,14 +180,14 @@ class TestUseRaw:
         anno_df = self._make_anno_df([
             {"chrom": "s2", "length": 5, "start": 0, "end": 4, "motif": 0, "orientation": "-", "sequence": "CCAAT", "score": 10, "cigar": "5=/"},
         ])
-        anno_out, concise_out, motif_out, dist_out = _use_raw(
-            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        anno_out, concise_out, motif_out, dist_out = make_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame(), 2, 7, 7, 7
         )
 
         assert motif_out.item(0, "motif") == "ATTGG"
         assert motif_out.item(0, "label") == "B"
 
-    def test_gap_rows_preserved(self):
+    def test_gap_rows_converted_to_raw_motifs(self):
         motif_df = self._make_motif_df(
             [{"id": 0, "motif": "ATTGG", "copyNumber": 0.0, "label": "C"}]
         )
@@ -195,11 +195,16 @@ class TestUseRaw:
             {"chrom": "s3", "length": 8, "start": 0, "end": 4, "motif": 0, "orientation": "+", "sequence": "ATTGG", "score": 10, "cigar": "5=/"},
             {"chrom": "s3", "length": 8, "start": 5, "end": 7, "motif": None, "orientation": None, "sequence": "AAA", "score": -21, "cigar": "3N"},
         ])
-        anno_out, concise_out, motif_out, dist_out = _use_raw(
-            anno_df, pl.DataFrame(), motif_df, pl.DataFrame()
+        anno_out, concise_out, motif_out, dist_out = make_raw(
+            anno_df, pl.DataFrame(), motif_df, pl.DataFrame(), 2, 7, 7, 7
         )
 
-        gap_row = anno_out.filter(pl.col("motif").is_null()).row(0, named=True)
-        assert gap_row["cigar"] == "3N"
-        assert gap_row["copyNumber"] is None
-        assert motif_out.shape[0] == 1
+        # The gap row is converted to a raw motif block.
+        gap_row = anno_out.filter(pl.col("sequence") == "AAA").row(0, named=True)
+        assert gap_row["cigar"] == "3=/"
+        assert gap_row["copyNumber"] == 1.0
+        assert gap_row["motif"] is not None
+        # The converted gap appears in the motif catalog with the skipped label.
+        skipped = motif_out.filter(pl.col("label") == "skipped")
+        assert skipped.shape[0] == 1
+        assert skipped.item(0, "motif") == "AAA"

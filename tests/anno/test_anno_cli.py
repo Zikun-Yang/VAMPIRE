@@ -21,7 +21,8 @@ class TestBasicAnnotation:
         ],
     )
     def test_perfect_tr(self, tmp_anno_cfg, input_fa, ksize, expected_motif):
-        cfg = tmp_anno_cfg(input_fa, ksize=ksize)
+        # Auto-scan can pick an unsuitable ksize for very short homopolymers.
+        cfg = tmp_anno_cfg(input_fa, ksize=ksize, no_auto=(ksize <= 3))
         run_anno(cfg)
 
         prefix = cfg["prefix"]
