@@ -70,7 +70,15 @@ VAMPIRE contains several subcommands. Here we list `scan`, `anno`, `generator` a
 
 ### <a name="scan"></a>scan - Annotate TRs on genome
 
-xxxxxxxx
+VAMPIRE can scan genome assemblies or long sequences to detect tandem repeat (TR) loci. It uses a multi-scale k-mer smoothness approach to identify candidate regions, followed by banded alignment to annotate period and copy number for each locus.
+
+```sh
+# Scan a genome with 8 threads
+vampire scan -t 8 genome.fa genome_scan
+
+# Output results in BED format
+vampire scan --format bed genome.fa genome_scan
+```
 
 ### <a name="anno"></a>anno - Annotate single TR locus across population
 
