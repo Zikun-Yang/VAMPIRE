@@ -2073,15 +2073,16 @@ def run_anno(cfg: dict[str, Any]) -> None:
     START_TIME: float = time.time()
 
     # Run scan to estimate period range; auto-select ksize unless --no-auto
-    if not cfg.get("no_auto"): # TODO
-        logger.info("Auto-selecting ksize using scan")
-        cfg = _select_ksize_by_scan_coverage(cfg)
-    else:
-        logger.info("Running scan for period range estimation (--no-auto: ksize not auto-selected)")
-        user_ksize = cfg.get("ksize")
-        cfg = _select_ksize_by_scan_coverage(cfg)
-        if user_ksize is not None:
-            cfg["ksize"] = user_ksize
+    if not cfg.get("no_denovo"):
+        if not cfg.get("no_auto"):
+            logger.info("Auto-selecting ksize using scan")
+            cfg = _select_ksize_by_scan_coverage(cfg)
+        else:
+            logger.info("Running scan for period range estimation (--no-auto: ksize not auto-selected)")
+            user_ksize = cfg.get("ksize")
+            cfg = _select_ksize_by_scan_coverage(cfg)
+            if user_ksize is not None:
+                cfg["ksize"] = user_ksize
 
     # read data
     if not Path(cfg['input']).exists():
