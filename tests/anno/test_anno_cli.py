@@ -130,8 +130,6 @@ class TestOutputStructure:
         df = pl.read_csv(f"{cfg['prefix']}.motif.tsv", separator="\t")
         required = {"id", "motif", "copyNumber", "label"}
         assert required.issubset(set(df.columns))
-<<<<<<< HEAD
-=======
 
 
 class TestPartialMotif:
@@ -169,4 +167,3 @@ class TestPartialMotif:
         concise_df = pl.read_csv(f"{cfg['prefix']}.concise.tsv", separator="\t")
         total_cn = concise_df["copyNumber"][0]
         assert 6.0 <= total_cn <= 7.0
->>>>>>> dev
