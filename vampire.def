@@ -21,23 +21,18 @@ From: ubuntu:22.04
 %post
     set -e
 
-    # System packages required for building Python scientific stack
+    # Runtime libraries for Python scientific / plotting wheels and Miniconda
     apt-get update && apt-get install -y \
         ca-certificates \
         wget \
         curl \
         bzip2 \
-        gfortran \
-        libblas-dev \
-        liblapack-dev \
-        libcurl4-openssl-dev \
-        libssl-dev \
-        libxml2-dev \
-        libfontconfig1-dev \
-        libfreetype6-dev \
-        libpng-dev \
-        libtiff5-dev \
-        libjpeg-dev \
+        libcurl4 \
+        libfontconfig1 \
+        libfreetype6 \
+        libpng16-16 \
+        libtiff5 \
+        libjpeg-turbo8 \
         locales
 
     locale-gen en_US.UTF-8

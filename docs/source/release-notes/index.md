@@ -8,8 +8,30 @@ tocdepth: 0
 
 ## Future features
 
-TBD
+| Status | Feature Description | Priority | Target Version |
+|:---|:---|:---:|:---:|
+| Planned   | Comprehensive metadata of human populational genome resources | P1 | v0.4 |
+| Planned   | Downstream analysis module for `scan` | P1 | v0.5 |
+| Discussed | Disease-associated expansion quantification | P3 | v0.5-0.6 |
+| Discussed | TR catalog generation pipeline | P3 | v0.5-0.6 |
 
 ## Versions
 
-TBD
+### **[Latest] — v0.4.0 (2026-06-22)**
+
+#### New Features
+- Added API framework (`vp.datasets`, `vp.anno.pp`, `vp.anno.pl`, `vp.anno.tl`) (Issues [#2](https://github.com/Zikun-Yang/VAMPIRE/issues/2), [#3](https://github.com/Zikun-Yang/VAMPIRE/issues/3))
+- Added CLI (`scan`)
+- Added `vp.datasets` module: `wdr7_hprc()`, `ancestry()`
+
+#### Improvements
+- We update `anno` with length-restrained loop searching method to resolve more complex tandem repeats.
+- We add the parameter `--use-raw` to `anno`. This can preserve all different motifs without compression. 
+
+#### Bug Fixes
+- Fixed Issue [#5](https://github.com/Zikun-Yang/VAMPIRE/issues/5)
+
+### **[Initial] — v0.3.0 (2025-06-02)**
+
+#### New Features
+- Added CLI framework (`anno`, ...)

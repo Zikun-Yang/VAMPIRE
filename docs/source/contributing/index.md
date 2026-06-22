@@ -5,4 +5,4 @@
 ```
 
 ## How to contribute
-Welcome to contribute to VAMPIRE! This section of the docs provides some guidelines and tips to follow when contributing.
+Welcome to contribute to VAMPIRE! We welcome all forms of contributions, whether it's bug fixes, feature additions, documentation improvements, or suggestions. Please submit your contributions via GitHub Pull Requests.

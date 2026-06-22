@@ -363,41 +363,43 @@ def read_anno(
         An AnnData object containing the annotation result.
         Each row (obs) is a sample, each column (var) is a motif.
     
-    Indexing:
+    Notes
+    -----
+    **Indexing:**
         - obs index corresponds to samples (chrom)
         - var index corresponds to motifs
         - X[i, j] aligns with obs[i] and var[j]
 
-    Structure
-    ---------
+    **Structure:**
+    ::
 
-    X:
-        (n_obs × n_var) motif abundance / copy-number matrix
-        X[i, j] = copy number of motif j in chromosome i
+        X:
+            (n_obs × n_var) motif abundance / copy-number matrix
+            X[i, j] = copy number of motif j in chromosome i
 
-    obs:
-        Sample metadata (n_obs × metadata)
-        - length : int
-        - copy_number : float
-        - score : int
+        obs:
+            Sample metadata (n_obs × metadata)
+            - length : int
+            - copy_number : float
+            - score : int
 
-    var:
-        Motif metadata (n_var × metadata)
-        - motif : str
-        - motif_length : int
-        - copy_number : float
-        - label : str
+        var:
+            Motif metadata (n_var × metadata)
+            - motif : str
+            - motif_length : int
+            - copy_number : float
+            - label : str
 
-    varp:
-        Motif-level pairwise relations (n_var × n_var)
-        - motif_distance : int
-        - rc_motif_distance : int
+        varp:
+            Motif-level pairwise relations (n_var × n_var)
+            - motif_distance : int
+            - rc_motif_distance : int
 
-    uns:
-        Unstructured genomic annotations (not aligned to X)
-        - sequence : dict[str, str]
-        - motif_array : dict[str, list[str]]
-        - orientation_array : dict[str, list[str]]
+        uns:
+            Unstructured genomic annotations (not aligned to X)
+            - sequence : dict[str, str]
+            - motif_array : dict[str, list[str]]
+            - orientation_array : dict[str, list[str]]
     """
     import pyarrow
     import numpy as np
