@@ -17,7 +17,16 @@ tocdepth: 0
 
 ## Versions
 
-### **[Latest] — v0.4.1 (2026-06-22)**
+### **[Latest] — v0.4.2 (2026-06-22)**
+
+#### Bug Fixes
+- Fixed a bug in `src/vampire/_anno.py`.
+
+#### New Features
+- Added GitHub Actions workflow (`.github/workflows/docker.yml`) to build and push Docker images to Docker Hub (`zikunyang/vampire-tr`) on every `v*` tag push.
+- Added `Dockerfile` at repository root.
+
+### v0.4.1 (2026-06-22)
 
 #### Bug Fixes
 - Added missing runtime dependencies discovered during v0.4.0 usage:

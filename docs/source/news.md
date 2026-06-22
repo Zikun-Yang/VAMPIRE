@@ -2,6 +2,13 @@
 
 <!-- marker: after prelude -->
 
+#### 2026-06-22 - VAMPIRE v0.4.2 Release
+
+- Fixed a bug in `src/vampire/_anno.py`.
+- Added GitHub Actions workflow to build and push Docker images to `zikunyang/vampire-tr` automatically on version tags.
+
+<!-- marker: before old news -->
+
 #### 2026-06-22 - VAMPIRE v0.4.1 Release
 
 - Fixed missing runtime dependencies: `parasail>=1.3`, `nbformat>=4.2.0`, `ipywidgets>=7.0`.
@@ -14,8 +21,6 @@
 - Added `vp.datasets` module: `wdr7_hprc()`, `ancestry()`
 - We update `anno` with length-restrained loop searching method to resolve more complex tandem repeats.
 - We add the parameter `--use-raw` to `anno`. This can preserve all different motifs without compression. 
-
-<!-- marker: before old news -->
 
 #### 2026-05-19 — VAMPIRE v0.4.0a2 (preview)
 

@@ -25,7 +25,7 @@ By representing TR arrays as hierarchical motif compositions and quantifying cop
 
 Read [the documentation](https://vampire-tr.readthedocs.io/en/latest/index.html). Open an issue or create a pull request if you would like to contribute.
 
-**Version:** v0.4.1
+**Version:** v0.4.2
 
 ## Quick Start
 

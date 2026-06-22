@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'VAMPIRE version to install (e.g. 0.4.1)'
+        description: 'VAMPIRE version to install (e.g. 0.4.2)'
         required: false
         default: ''
 

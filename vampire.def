@@ -3,7 +3,7 @@ From: ubuntu:22.04
 
 %labels
     Author Zikun-Yang
-    Version v0.4.1
+    Version v0.4.2
 
 %help
     VAMPIRE - tandem repeat motif annotation tool
@@ -16,7 +16,7 @@ From: ubuntu:22.04
         apptainer build --build-arg CONDA_MIRROR=cn vampire.sif vampire.def
 
       Install a specific version:
-        apptainer build --build-arg VAMPIRE_VERSION=0.4.1 vampire.sif vampire.def
+        apptainer build --build-arg VAMPIRE_VERSION=0.4.2 vampire.sif vampire.def
 
 %arguments
     VAMPIRE_VERSION=""
@@ -91,5 +91,5 @@ From: ubuntu:22.04
     export PYTHONUNBUFFERED=1
 
 %runscript
-    echo "VAMPIRE v0.4.1 - tandem repeat motif annotation"
+    echo "VAMPIRE v0.4.2 - tandem repeat motif annotation"
     exec "$@"
