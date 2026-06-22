@@ -5,8 +5,6 @@ ARG CONDA_MIRROR
 
 ENV LANG=en_US.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
-# Auto-accept Anaconda Terms of Service in non-interactive environments
-ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
 
 LABEL Author="Zikun-Yang"
 LABEL Version="v0.4.1"
@@ -28,9 +26,9 @@ RUN set -e && \
     locale-gen en_US.UTF-8 && \
     update-locale LANG=en_US.UTF-8 && \
     \
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
-    bash /tmp/miniconda.sh -b -p /opt/conda && \
-    rm /tmp/miniconda.sh && \
+    wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p /opt/conda && \
+    rm /tmp/miniforge.sh && \
     export PATH="/opt/conda/bin:$PATH" && \
     \
     if [ "${CONDA_MIRROR}" = "cn" ]; then \
