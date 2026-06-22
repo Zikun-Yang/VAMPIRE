@@ -2,6 +2,11 @@
 
 <!-- marker: after prelude -->
 
+#### 2026-06-22 - VAMPIRE v0.4.1 Release
+
+- Fixed missing runtime dependencies: `parasail>=1.3`, `nbformat>=4.2.0`, `ipywidgets>=7.0`.
+- These packages are now declared in `pyproject.toml` so `pip install vampire-tr` brings in everything needed for CLI and Jupyter notebook usage.
+
 #### 2026-06-22 - VAMPIRE v0.4.0 Release
 
 - Added API framework (`vp.datasets`, `vp.anno.pp`, `vp.anno.pl`, `vp.anno.tl`) (Issues [#2](https://github.com/Zikun-Yang/VAMPIRE/issues/2), [#3](https://github.com/Zikun-Yang/VAMPIRE/issues/3))

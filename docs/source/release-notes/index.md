@@ -17,7 +17,15 @@ tocdepth: 0
 
 ## Versions
 
-### **[Latest] — v0.4.0 (2026-06-22)**
+### **[Latest] — v0.4.1 (2026-06-22)**
+
+#### Bug Fixes
+- Added missing runtime dependencies discovered during v0.4.0 usage:
+  - `parasail>=1.3` (required by `vampire.anno.tl.motif_msa`)
+  - `nbformat>=4.2.0` (required by Plotly for Jupyter rendering)
+  - `ipywidgets>=7.0` (required by `tqdm` for Jupyter progress bar widgets)
+
+### v0.4.0 (2026-06-22)
 
 #### New Features
 - Added API framework (`vp.datasets`, `vp.anno.pp`, `vp.anno.pl`, `vp.anno.tl`) (Issues [#2](https://github.com/Zikun-Yang/VAMPIRE/issues/2), [#3](https://github.com/Zikun-Yang/VAMPIRE/issues/3))
