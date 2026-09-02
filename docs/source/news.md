@@ -2,6 +2,15 @@
 
 <!-- marker: after prelude -->
 
+#### 2026-07-14 - VAMPIRE v0.4.3 Release
+
+- Added automatic k-size selection for `anno` based on internal scan coverage and periodicity metrics.
+- Added adaptive boundary padding in `anno` to recover motifs at sequence edges.
+- Replaced De Bruijn graph edge-weight copy numbers with exact motif occurrence counts using Aho-Corasick matching.
+- Added `--use-raw` output mode for `anno` to preserve observed motifs without post-processing compression.
+- Fixed a Polars fork-safety issue by setting `POLARS_MAX_THREADS=1` before submodule import.
+- Updated CLI help text and added unit tests for `anno` utility functions.
+
 #### 2026-06-22 - VAMPIRE v0.4.2 Release
 
 - Fixed a bug in `src/vampire/_anno.py`.

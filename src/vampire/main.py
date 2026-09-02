@@ -103,8 +103,9 @@ def main():
     parser_anno = subparsers.add_parser("anno",
                                         description="VAMPIRE anno\n"
                                                     "Usage: vampire anno [options] <input.fa> <output_prefix>\n"
-                                                    "For example: vampire anno --auto <input.fa> <output_prefix>\n"
-                                                    "             vampire anno -k 13 --score 15 <CEN1.fa> <output_prefix>\n",
+                                                    "For example: vampire anno <input.fa> <output_prefix>\n"
+                                                    "             vampire anno --no-auto -k 13 <input.fa> <output_prefix>\n"
+                                                    "             vampire anno --no-denovo -m <motifs.fa> <input.fa> <output_prefix>\n",
                                         formatter_class=argparse.RawTextHelpFormatter,
                                         help="Annotate single tandem repeat locus")
 
@@ -166,6 +167,7 @@ def main():
     parser_generator.add_argument("-r", "--mutation-rate", default=0, type=float, help="Mutation rate, 0 - 1")
     parser_generator.add_argument("-s", "--seed", default=42, type=int, help="Random seed, DEFAULT: 42")
     parser_generator.add_argument("-p", "--prefix", required=True, type=str, help="Output prefix")
+    parser_generator.add_argument("-j", "--job", type=str, default=None, help="Job directory for temporary files [None]")
     parser_generator.add_argument("--debug", action="store_true", help="Output debug info [False]")
 
     # ------------------------------------------------------------

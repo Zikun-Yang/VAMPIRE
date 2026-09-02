@@ -274,6 +274,28 @@ def sample_msa(
             consensus_motifs.append(str(mid % n_motifs))
             consensus_oris.append("-" if mid >= n_motifs else "+")
 
+    # Defensive check: the MSA must be rectangular (all rows equal length).
+    # Iterative refinement re-aligns each sample to the consensus
+    # independently; samples with private insertions relative to the
+    # consensus (e.g. extra VNTR copies) can otherwise come out longer,
+    # which breaks downstream column-wise operations with an IndexError.
+    row_lengths = {name: len(m) for name, m in final_motifs.items()}
+    if len(set(row_lengths.values())) > 1:
+        max_len = max(row_lengths.values())
+        logger.warning(
+            "Aligned motif array is not rectangular (row lengths: %s). "
+            "Padding shorter rows with gaps to length %d so downstream "
+            "steps do not crash. This is a refinement artifact; column "
+            "alignment of the affected samples may be approximate.",
+            sorted(set(row_lengths.values())),
+            max_len,
+        )
+        for name in final_motifs:
+            m = final_motifs[name]
+            if len(m) < max_len:
+                final_motifs[name] = m + ["-"] * (max_len - len(m))
+                final_oris[name] = final_oris[name] + ["-"] * (max_len - len(final_oris[name]))
+
     adata.uns[f"{store_key}_motif_array"] = final_motifs
     adata.uns[f"{store_key}_orientation_array"] = final_oris
     adata.uns[f"{store_key}_consensus"] = consensus_motifs
@@ -504,6 +526,70 @@ def _merge_profiles(
                 idx_b += 1
 
     return merged
+
+
+def _merge_pairwise_alignments(
+    pairs: dict[str, tuple[list[str], list[str]]],
+    n_cons: int,
+) -> dict[str, list[str]]:
+    """Merge sequence-vs-consensus pairwise alignments into a rectangular MSA.
+
+    Each pairwise alignment (as returned by :func:`_nw`) may contain columns
+    where the consensus side is gapped, i.e. sample-specific insertions
+    relative to the consensus.  These insertions are anchored to the nearest
+    consensus boundary and converted into shared columns (padded with gaps
+    for the other samples), so that every output row has the same length and
+    column semantics are consistent across samples.
+
+    Parameters
+    ----------
+    pairs
+        Mapping from sequence name to ``(aligned_seq, aligned_consensus)``.
+        The non-gap tokens of every ``aligned_consensus`` must reproduce the
+        consensus, i.e. there are exactly ``n_cons`` of them.
+    n_cons
+        Number of non-gap positions in the consensus.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        Rectangular alignment.  Every row has length
+        ``n_cons + sum(max insertion-run width per boundary)``.
+    """
+    ins_width = [0] * (n_cons + 1)
+    per_sample: dict[str, tuple[list[str], list[list[str]]]] = {}
+
+    for name, (aln_seq, aln_cons) in pairs.items():
+        cons_cols = ["-"] * n_cons
+        ins_cols: list[list[str]] = [[] for _ in range(n_cons + 1)]
+        p = 0
+        for s, c in zip(aln_seq, aln_cons):
+            if c != "-":
+                cons_cols[p] = s
+                p += 1
+            else:
+                # Insertion anchored to boundary p (before consensus col p).
+                ins_cols[p].append(s)
+        assert p == n_cons, (
+            f"Aligned consensus for '{name}' has {p} non-gap positions, "
+            f"expected {n_cons}."
+        )
+        for b in range(n_cons + 1):
+            if len(ins_cols[b]) > ins_width[b]:
+                ins_width[b] = len(ins_cols[b])
+        per_sample[name] = (cons_cols, ins_cols)
+
+    rows: dict[str, list[str]] = {}
+    for name, (cons_cols, ins_cols) in per_sample.items():
+        row: list[str] = []
+        for b in range(n_cons + 1):
+            run = ins_cols[b]
+            row.extend(run)
+            row.extend(["-"] * (ins_width[b] - len(run)))
+            if b < n_cons:
+                row.append(cons_cols[b])
+        rows[name] = row
+    return rows
 
 
 def _find_homopolymers(consensus: list[str]) -> list[tuple[int, int]]:
@@ -1131,17 +1217,23 @@ def _msa_core(
             consensus = _profile_consensus(temp_profile)
             old_consensus = consensus
 
-            # Re-align every raw sequence to the consensus
-            new_aligned: dict[str, list[str]] = {}
+            # Re-align every raw sequence to the consensus, keeping both
+            # sides of each pairwise alignment.  Sample-specific insertions
+            # (columns where the consensus side is gapped, e.g. extra VNTR
+            # copies) are then merged back into shared gap columns so the
+            # result stays rectangular; previously the consensus side was
+            # discarded and longer rows were silently truncated below.
+            new_pairs: dict[str, tuple[list[str], list[str]]] = {}
             for name in names:
-                aligned_seq, _ = _nw(
+                aligned_seq, aligned_cons = _nw(
                     sequences[name],
                     consensus,
                     sub_matrix,
                     gap_open_penalty,
                     gap_extend_penalty,
                 )
-                new_aligned[name] = aligned_seq
+                new_pairs[name] = (aligned_seq, aligned_cons)
+            new_aligned = _merge_pairwise_alignments(new_pairs, len(consensus))
 
             # Rebuild consensus from new alignments
             new_msa_len = len(new_aligned[names[0]])

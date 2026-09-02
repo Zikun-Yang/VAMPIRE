@@ -133,6 +133,40 @@ class TestOutputStructure:
         assert required.issubset(set(df.columns))
 
 
+class TestLongSequence:
+    """Regression tests for sequences longer than the annotation window."""
+
+    def test_coordinates_extend_past_first_window(self, tmp_anno_cfg):
+        """Annotations on sequences longer than seq_win_size must use global coordinates.
+
+        Before the fix, annotate_sequence computed the coordinate offset but never
+        assigned the updated DataFrame back to seg.anno_df, so every window's
+        coordinates stayed in [0, seq_win_size) and the full repeat was not annotated.
+        """
+        data_dir = Path(__file__).parent / "data"
+        cfg = tmp_anno_cfg(
+            "006-long_tr.fa",
+            ksize=5,
+            no_denovo=True,
+            force=True,
+            motif=str(data_dir / "006-long_tr.motif.fa"),
+            skip_report=True,
+            skip_h5ad=True,
+        )
+        run_anno(cfg)
+
+        anno_df = pl.read_csv(f"{cfg['prefix']}.annotation.tsv", separator="\t")
+        # The test sequence is 7000 bp and seq_win_size defaults to 5000.
+        # Without the fix the maximum end coordinate would be ~4999.
+        assert anno_df["end"].max() > 4999
+        assert anno_df["end"].max() == 7000
+
+        concise_df = pl.read_csv(f"{cfg['prefix']}.concise.tsv", separator="\t")
+        assert concise_df.shape[0] == 1
+        assert concise_df["end"][0] == 7000
+        assert concise_df["copyNumber"][0] == 1400.0  # 7000 bp / 5 bp motif
+
+
 class TestPartialMotif:
     """Tests that short internal gaps can be resolved as partial motif copies."""
 

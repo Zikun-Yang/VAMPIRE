@@ -14,7 +14,6 @@ import numba
 import ahocorasick
 
 import os
-os.environ["POLARS_MAX_THREADS"] = "1"
 import polars as pl
 from pybktree import BKTree
 import numpy as np
@@ -136,6 +135,7 @@ class Decompose:
         self: 'Decompose',
         period_range: tuple[int, int] | None = None,
         max_revisits: int = 2,
+        max_motifs: int | None = None,
     ) -> pl.DataFrame:
         """
         Length-constrained closed walk enumeration.
@@ -153,6 +153,9 @@ class Decompose:
         max_revisits : int
             Maximum number of times a node may be visited in one walk.
             ``1`` means simple cycles only; ``2`` captures one revisit per node.
+        max_motifs : int | None
+            Maximum number of closed walks to record. Once this many motifs have
+            been found the search stops early. ``None`` means no limit.
         """
         if self.motif_df is not None:
             return self.motif_df
@@ -166,12 +169,13 @@ class Decompose:
 
         dbg = self.dbg
         motifs: list[list] = []
+        done = False  # early-exit flag when max_motifs reached
 
         # SCC decomposition
         sccs = list(nx.strongly_connected_components(dbg))
 
         for scc in sccs:
-            if len(scc) < L_min:
+            if done or len(scc) < L_min:
                 continue
 
             sub_dbg = dbg.subgraph(scc)
@@ -180,6 +184,8 @@ class Decompose:
             node_to_idx = {node: i for i, node in enumerate(scc_nodes)}
 
             for start in scc_nodes:
+                if done:
+                    break
                 dist_to_start = nx.shortest_path_length(reverse_sub, source=start)
 
                 start_idx = node_to_idx[start]
@@ -221,18 +227,27 @@ class Decompose:
                             ) if edge_counts else 0
 
                             motifs.append([motif, None, 'UNKNOWN', min_weight, "denovo"])
+                            if max_motifs is not None and len(motifs) >= max_motifs:
+                                logger.debug(f"Reached max_motifs={max_motifs}; stopping closed-walk search.")
+                                done = True
+                                break
 
                     if cur == start and depth > 0:
                         continue
 
-                    for succ in sub_dbg.successors(cur):
-                        if succ == start:
-                            continue
+                    # Explore high-weight successors first so high-copy-number
+                    # closed walks are discovered earlier.
+                    successors = sorted(
+                        (n for n in sub_dbg.successors(cur) if n != start),
+                        key=lambda n: sub_dbg[cur][n]["weight"],
+                        reverse=True,
+                    )
+                    for succ in successors:
                         succ_idx = node_to_idx[succ]
                         if visit_counts[succ_idx] >= max_revisits:
                             continue
                         visit_counts[succ_idx] += 1
-                        stack.append(('enter', succ, path + [succ], depth + 1))
+                        stack.append(("enter", succ, path + [succ], depth + 1))
 
         # deduplication by canonicalization
         # keep one with largest copy number for same canonical motifs
@@ -424,7 +439,7 @@ def rc(seq: str) -> str:
 
 
 def _count_exact_motif_occurrences(
-    sequences: list[str],
+    sequences: Iterator[str] | list[str],
     motifs: list[str],
     include_rc: bool = False,
 ) -> dict[str, int]:
@@ -440,9 +455,12 @@ def _count_exact_motif_occurrences(
     the same original motif is returned, which recovers the true copy number
     regardless of the phase present in the sequence.
 
+    ``sequences`` may be an iterator so that padded copies do not need to be
+    materialized in a list.
+
     Parameters
     ----------
-    sequences : list[str]
+    sequences : Iterator[str] | list[str]
         Input sequences.
     motifs : list[str]
         Motifs to query.
@@ -472,20 +490,13 @@ def _count_exact_motif_occurrences(
     for motif in motifs:
         if not motif:
             continue
-        seen_rotations: set[str] = set()
         for shift in range(len(motif)):
             rotation = motif[shift:] + motif[:shift]
-            if rotation in seen_rotations:
-                continue
-            seen_rotations.add(rotation)
             _register(rotation, motif)
         if include_rc:
             rc_motif = rc(motif)
             for shift in range(len(rc_motif)):
                 rotation = rc_motif[shift:] + rc_motif[:shift]
-                if rotation in seen_rotations:
-                    continue
-                seen_rotations.add(rotation)
                 _register(rotation, motif)
 
     if not indexed_rotations:
@@ -625,6 +636,7 @@ def decompose_sequence(
     seg.find_motif(
         period_range=period_range,
         max_revisits=CFG.get("max_revisits", 2),
+        max_motifs=CFG.get("max_motifs"),
     )
 
     return seg
@@ -776,7 +788,8 @@ def polish_motif(
                 motif = canonical_form, 
                 basic_unit = best_ref, 
                 min_similarity = 0.8,
-                min_remaining_ratio = 0.5,
+                min_remaining_ratio_for_long_motif = 0.5,
+                min_remaining_ratio_for_short_motif = 0.8
             )
             if is_cut:
                 logger.debug(f"Cut motif {motif} to {cut_units}")
@@ -826,7 +839,8 @@ def _try_cut(
     motif: str,
     basic_unit: str,
     min_similarity: float = 0.8,
-    min_remaining_ratio: float = 0.5,
+    min_remaining_ratio_for_long_motif: float = 0.5,
+    min_remaining_ratio_for_short_motif: float = 0.8,
 ) -> tuple[list[str], bool]:
     """
     Attempt to decompose a motif using a shorter basic repeat unit.
@@ -849,9 +863,12 @@ def _try_cut(
     min_similarity : float, optional
         Minimum similarity required for the best-aligned unit block. If no
         block reaches this threshold, the motif is left unchanged.
-    min_remaining_ratio : float, optional
+    min_remaining_ratio_for_long_motif : float, optional
         Minimum remaining length (relative to ``basic_unit``) required to
-        continue splitting. Shorter terminal fragments are kept intact.
+        continue splitting for long motifs. Shorter terminal fragments are kept intact.
+    min_remaining_ratio_for_short_motif : float, optional
+        Minimum remaining length (relative to ``basic_unit``) required to
+        continue splitting for short motifs. Shorter terminal fragments are kept intact.
 
     Returns:
     tuple[list[str], bool]
@@ -861,8 +878,8 @@ def _try_cut(
         - Whether any cutting operation was performed.
     """
     cut_units: list[str] = []
-    seq_len: int = len(motif)
-    motif_len: int = len(basic_unit)
+    motif_len: int = len(motif)
+    unit_len: int = len(basic_unit)
     encoded_motif: np.ndarray = encode_seq_to_array(motif)
     encoded_unit: np.ndarray = encode_seq_to_array(basic_unit)
 
@@ -874,34 +891,39 @@ def _try_cut(
         align_to_end = True,
     )
 
-    state: int= np.argmax(score_array[seq_len - 1, :]) # 0 -> M, 1 -> I, 2 -> D
-    best_j: int = band_argmax_j[seq_len - 1, state]
+    state: int= np.argmax(score_array[motif_len - 1, :]) # 0 -> M, 1 -> I, 2 -> D
+    best_j: int = band_argmax_j[motif_len - 1, state]
 
     # calculate edit distance from traceback
     ops, _, _ = traceback_banded_roll_motif(
         trace_M = trace_M,
         trace_I = trace_I,
         trace_D = trace_D,
-        best_i = seq_len,
+        best_i = motif_len,
         best_j = best_j,
-        m = motif_len,
+        best_state = state,
+        m = unit_len,
         seq = encoded_motif,
         motif = encoded_unit
     )
 
     # data structure: (start, end, distance, score, cigar)
-    unit_blocks: list[tuple[int, int, int, int, str]] = split_ops(ops, len(basic_unit), len(basic_unit))
-    min_distance = min(block[2] for block in unit_blocks)
+    unit_blocks: list[tuple[int, int, int, int, str]] = split_ops(ops, unit_len, unit_len)
+    similarity_list: list[float] = [1 - block[2] / (block[1] - block[0] + 1) for block in unit_blocks]
+    max_similarity: float = max(similarity_list)
 
     # if the best block is still too dissimilar, give up cutting
-    if min_distance / len(basic_unit) > (1 - min_similarity):
+    if max_similarity < min_similarity:
         return [motif], False
 
     is_cut: bool = False
     for block in unit_blocks:
         start, end, distance, score, cigar = block
-        # if too short after ccutting, keep the tail uncut
-        if (seq_len - end + 1) / len(basic_unit) < min_remaining_ratio:
+        # if too short after cutting, keep the tail uncut
+        if unit_len > 6 and (motif_len - end - 1) / float(unit_len) < min_remaining_ratio_for_long_motif:
+            cut_units.append(motif[start: ])
+            break
+        elif unit_len <= 6 and (motif_len - end - 1) / float(unit_len) < min_remaining_ratio_for_short_motif:
             cut_units.append(motif[start: ])
             break
         # cut the motif and canonicalize the remaining part
@@ -909,6 +931,8 @@ def _try_cut(
             cut_units.append(motif[start: end + 1])
         is_cut = True
 
+    if not cut_units:
+        return [motif], False
     return cut_units, is_cut
 
 def annotate_sequence(
@@ -932,6 +956,7 @@ def annotate_sequence(
         (pl.col("end") + (pid - 1) * (SEQ_WIN_SIZE - SEQ_OVLP_SIZE)).alias("end")
     )
     anno_df = anno_df.sort("end")
+    seg.anno_df = anno_df
     ###logger.debug(f"Finished annotation: {seg.name}")
     return seg
 
@@ -1106,8 +1131,12 @@ def banded_dp_align(
     )
 
 def traceback_banded_roll_motif(
-    trace_M: np.ndarray, trace_I: np.ndarray, trace_D: np.ndarray,
-    best_i: int, best_j: int,
+    trace_M: np.ndarray,
+    trace_I: np.ndarray,
+    trace_D: np.ndarray,
+    best_i: int,
+    best_j: int,
+    best_state: int,
     m: int,
     seq: np.ndarray,
     motif: np.ndarray,
@@ -1119,6 +1148,7 @@ def traceback_banded_roll_motif(
         trace_D: np.ndarray, traceback matrix for deletion
         best_i: int, best index in seq
         best_j: int, best index in motif
+        best_state: int, best state (0=M, 1=I, 2=D)
         m: int, length of motif
         seq: np.ndarray, target sequence
         motif: np.ndarray, query motif
@@ -1130,7 +1160,7 @@ def traceback_banded_roll_motif(
         state: 0=M (diagonal), 1=I (gap in motif), 2=D (gap in seq)
     """
     i, j = best_i, best_j
-    state = 0
+    state = best_state
 
     ops: list[str] = []
 
@@ -1196,6 +1226,7 @@ def find_similar_match(seq: str, motifs: list[str], max_distances: list[int]) ->
             trace_D = trace_D,
             best_i = seq_len,
             best_j = best_j,
+            best_state = state,
             m = motif_len,
             seq = seq,
             motif = motif
@@ -1500,6 +1531,7 @@ def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> in
         trace_D = trace_D,
         best_i = len(m1),
         best_j = best_j,
+        best_state = state,
         m = len(m2),
         seq = m1,
         motif = m2
@@ -1574,6 +1606,94 @@ def calculate_phase_difference(m1: str, m2: str) -> int:
 # ksize parameter selecting functions
 #
 """
+def _select_best_ksize(
+    expected_period: float | None,
+    periodicity_by_k: dict[int, dict[str, float]],
+    candidate_k: list[int],
+) -> int:
+    """
+    Select a k-mer size appropriate for the estimated motif period.
+
+    The chosen k should fit within a single motif copy and be large enough
+    to reduce interference from internal sub-repeats. Among valid candidates,
+    k is selected by maximizing the periodicity signal (near_ratio). If
+    multiple k values have comparable periodicity, the one closest to the
+    expected half-period is preferred.
+
+    Parameters
+    ----------
+    expected_period : float | None
+        Estimated motif length from the auto-scan output.
+    periodicity_by_k : dict[int, dict[str, float]]
+        Mapping from k-mer size to periodicity metrics.
+    candidate_k : list[int]
+        Candidate k-mer sizes tried by the auto-scan.
+
+    Returns
+    -------
+    int
+        The selected k-mer size.
+    """
+    if expected_period is None or expected_period <= 0 or not periodicity_by_k:
+        return min(
+            periodicity_by_k,
+            key=lambda k: periodicity_by_k[k].get("mean_dev", float("inf")),
+        )
+
+    p = float(expected_period)
+
+    # Restrict k to values that are large enough to avoid sub-repeat noise
+    # but do not exceed the expected motif length.
+    if p <= 6: # [51, 31, 25, 17, 13, 11, 9, 7, 5, 3]
+        min_k, max_k = 3, 5
+    elif p <= 12:
+        min_k, max_k = 3, 7
+    elif p <= 20:
+        min_k, max_k = 7, 11
+    elif p <= 40:
+        min_k, max_k = 9, 21
+    elif p <= 100:
+        min_k, max_k = 11, 31
+    elif p <= 200:
+        min_k, max_k = 17, 51
+    elif p <= 500:
+        min_k, max_k = 25, 51
+    else:
+        min_k, max_k = 31, min(int(p), 51)
+
+    target_k = max(min_k, min(int(p // 2), max_k))
+
+    valid_k = [
+        k for k in candidate_k
+        if k in periodicity_by_k and min_k <= k <= max_k
+    ]
+
+    if not valid_k:
+        # Relax the upper bound if no candidates satisfy the strict range.
+        relaxed_max = max(int(p * 1.5), min_k + 2)
+        valid_k = [
+            k for k in candidate_k
+            if k in periodicity_by_k and min_k <= k <= relaxed_max
+        ]
+
+    if not valid_k:
+        valid_k = [
+            k for k in candidate_k
+            if k in periodicity_by_k
+        ]
+
+    # Select the k with the strongest periodicity signal. If multiple k values
+    # have similar signal, prefer the one closest to half of the expected
+    # motif period.
+    return min(
+        valid_k,
+        key=lambda k: (
+            -periodicity_by_k[k].get("near_ratio", 0.0),
+            abs(k - target_k),
+        ),
+    )
+
+
 def _compute_periodicity_from_distance(
     distance_dir: Path,
     k: int,
@@ -1662,7 +1782,7 @@ def _select_ksize_by_scan_coverage(cfg: dict[str, Any]) -> dict[str, Any]:
     import subprocess
     import sys
 
-    candidate_k = [101, 51, 31, 25, 17, 13, 11, 9, 7, 5, 3]
+    candidate_k = [51, 31, 25, 17, 13, 11, 9, 7, 5, 3]
 
     prefix = f"{cfg['job_dir']}/auto_scan"
     temp_job_dir = f"{cfg['job_dir']}/auto_scan_temp"
@@ -1682,6 +1802,7 @@ def _select_ksize_by_scan_coverage(cfg: dict[str, Any]) -> dict[str, Any]:
         "--mismatch-penalty", str(cfg["mismatch_penalty"]),
         "--gap-open-penalty", str(cfg["gap_open_penalty"]),
         "--gap-extend-penalty", str(cfg["gap_extend_penalty"]),
+        "--min-score", "10",
         "--skip-report",
         "--skip-cigar",
         "--debug",
@@ -1701,90 +1822,107 @@ def _select_ksize_by_scan_coverage(cfg: dict[str, Any]) -> dict[str, Any]:
 
     # check kmin validity
     scan_result = pl.read_csv(f"{cfg['job_dir']}/auto_scan.tsv", separator="\t")
-    cn = scan_result["copyNumber"]
-    ratio_below = (cn < cfg["kmin"]).mean()
-    if ratio_below > 0.5:
-        median_cn = cn.median()
-        new_kmin = max(1, int(median_cn))
 
+    # Use the top-scoring motif per sample for all downstream estimates so that
+    # over-called samples do not bias kmin, padding motif, or period selection.
+    scan_top1 = pl.DataFrame()
+    if not scan_result.is_empty():
+        scan_top1 = scan_result.sort("score", descending=True).group_by("chrom").head(1)
+
+    if not scan_top1.is_empty():
+        cn = scan_top1["copyNumber"]
+        ratio_below = (cn < cfg["kmin"]).mean()
+        if ratio_below is not None and ratio_below >= 0.5:
+            median_cn = cn.median()
+            if median_cn is not None:
+                new_kmin = max(1, int(median_cn))
+
+                logger.warning(
+                    f"{ratio_below:.2%} samples have copy number below kmin={cfg['kmin']} "
+                    f"Lowering kmin to {new_kmin} (median observed copy number={median_cn})."
+                )
+
+                cfg["kmin"] = new_kmin
+    else:
         logger.warning(
-            f"{int((cn < cfg['kmin']).sum())} samples below kmin={cfg['kmin']} "
-            f"(ratio={ratio_below:.2%}). "
-            f"Adjusting kmin -> {new_kmin} (median={median_cn})."
+            "Auto-scan produced no regions; skipping kmin adjustment. "
+            "If k-size auto-selection fails, consider checking the input sequence."
         )
-
-        cfg["kmin"] = new_kmin
 
     # Derive a consensus motif from scan to pad sequences during k-mer counting.
     # Padding makes boundary k-mers appear in multiple copies so they form SCCs
     # instead of being filtered out.
-    if "motif" in scan_result.columns and "copyNumber" in scan_result.columns and not scan_result.is_empty():
-        try:
-            scan_with_can = scan_result.with_columns(
-                pl.col("copyNumber").cast(pl.Float64, strict=False)
-            ).with_columns(
-                pl.col("motif")
-                .map_elements(canonicalize_motif_str, return_dtype=pl.Utf8)
-                .alias("canonical_motif")
-            )
-            agg = scan_with_can.group_by("canonical_motif").agg(
-                pl.col("copyNumber").sum().alias("total_cn")
-            )
-            best_can = agg.sort("total_cn", descending=True).item(0, "canonical_motif")
-            best_repr = (
-                scan_with_can.filter(pl.col("canonical_motif") == best_can)
-                .sort(pl.col("motif").str.len_chars(), descending=True)
-                .item(0, "motif")
-            )
-            cfg["padding_motif"] = best_repr
-        except Exception:
-            pass
+    if not scan_top1.is_empty():
+        scan_with_can = scan_top1.with_columns(
+            pl.col("copyNumber").cast(pl.Float64, strict=False)
+        ).with_columns(
+            pl.col("motif")
+            .map_elements(canonicalize_motif_str, return_dtype=pl.Utf8)
+            .alias("canonical_motif")
+        )
+        agg = scan_with_can.group_by("canonical_motif").agg(
+            pl.col("copyNumber").sum().alias("total_cn")
+        )
+        best_can = agg.sort("total_cn", descending=True).item(0, "canonical_motif")
+        best_repr = (
+            scan_with_can.filter(pl.col("canonical_motif") == best_can)
+            .sort(pl.col("motif").str.len_chars(), descending=True)
+            .item(0, "motif")
+        )
+        cfg["padding_motif"] = best_repr
 
-    # estimate motif length
-    motif_len_list = scan_result["motif"].drop_nulls().str.len_chars()
-    motif_len_list = motif_len_list.filter(motif_len_list > 0)
+    # estimate motif length using the top-scoring motif per sample so that
+    # samples with multiple called motifs do not bias the period estimate.
     period_range = None
     expected_period = None
-    if len(motif_len_list) > 0:
-        # Normalize integer-multiple motif lengths (dimers, trimers, etc.) to the
-        # fundamental period so they do not inflate the estimated range.
-        lengths = motif_len_list
-        unique_sorted = sorted({int(x) for x in lengths if x > 0})
-        if len(unique_sorted) > 1:
-            tolerance = 0.1
-            normalized: list[int] = []
-            for L in lengths:
-                L = int(L)
-                fundamental = L
-                for d in unique_sorted:
-                    if d >= L:
-                        break
-                    ratio = L / d
-                    k = round(ratio)
-                    if k > 1 and abs(ratio - k) <= tolerance:
-                        fundamental = d
-                normalized.append(fundamental)
-            lengths = pl.Series(normalized)
+    if not scan_top1.is_empty():
+        logger.debug(
+            f"Using top-scoring motif per sample for period estimation "
+            f"(n={len(scan_top1)} samples)"
+        )
 
-        # Use the median normalized motif length as the expected period for
-        # selecting the k-size whose distance-derived dominant period matches best.
-        expected_period = float(lengths.median())
+        motif_len_list = scan_top1["motif"].drop_nulls().str.len_chars()
+        motif_len_list = motif_len_list.filter(motif_len_list > 0)
+        if len(motif_len_list) > 0:
+            # Normalize integer-multiple motif lengths (dimers, trimers, etc.) to the
+            # fundamental period so they do not inflate the estimated range.
+            lengths = motif_len_list
+            unique_sorted = sorted({int(x) for x in lengths if x > 0})
+            if len(unique_sorted) > 1:
+                tolerance = 0.1
+                normalized: list[int] = []
+                for L in lengths:
+                    L = int(L)
+                    fundamental = L
+                    for d in unique_sorted:
+                        if d >= L:
+                            break
+                        ratio = L / d
+                        k = round(ratio)
+                        if k > 1 and abs(ratio - k) <= tolerance:
+                            fundamental = d
+                    normalized.append(fundamental)
+                lengths = pl.Series(normalized)
 
-        # calculate statistics
-        q25 = int(lengths.quantile(0.25))
-        q75 = int(lengths.quantile(0.75))
+            # Use the median normalized motif length as the expected period for
+            # selecting the k-size whose distance-derived dominant period matches best.
+            expected_period = float(lengths.median())
 
-        # set range based on IQR
-        iqr = q75 - q25
-        margin = max(int(1.5 * iqr), 2)
+            # calculate statistics
+            q25 = int(lengths.quantile(0.25))
+            q75 = int(lengths.quantile(0.75))
 
-        L_min = max(1, int(q25 - margin))
-        L_max = int(q75 + margin)
+            # set range based on IQR
+            iqr = q75 - q25
+            margin = max(int(1.5 * iqr), 2)
 
-        L_min = L_min if cfg['lmin'] <= 0 else cfg['lmin']
-        L_max = L_max if cfg['lmax'] <= 0 else cfg['lmax']
+            L_min = max(1, int(q25 - margin))
+            L_max = int(q75 + margin)
 
-        period_range: tuple[int, int] = (L_min, L_max)
+            L_min = L_min if cfg['lmin'] <= 0 else cfg['lmin']
+            L_max = L_max if cfg['lmax'] <= 0 else cfg['lmax']
+
+            period_range: tuple[int, int] = (L_min, L_max)
 
     if period_range:
         cfg["period_range"] = period_range
@@ -1808,18 +1946,15 @@ def _select_ksize_by_scan_coverage(cfg: dict[str, Any]) -> dict[str, Any]:
     for k, per in periodicity_by_k.items():
         logger.debug(f"  k={k}: {per}")
 
-    # Select k with the smallest mean deviation from expected period.
+    # Select a k that is appropriate for the estimated motif period.
     if not cfg.get("no_auto"):
-        mean_devs: dict[int, float] = {}
-        for k, per in periodicity_by_k.items():
-            mean_devs[k] = per.get("mean_dev", float("inf")) ### * (1 - per.get("valid_ratio", float("inf")))
-
-        best_k = min(mean_devs, key=mean_devs.get)
+        best_k = _select_best_ksize(expected_period, periodicity_by_k, candidate_k)
         best_per = periodicity_by_k[best_k]
+        period_str = f"{expected_period:.1f}" if expected_period is not None else "None"
         logger.info(
             f"Auto-selected k={best_k} "
-            f"(expected_period={expected_period:.1f}, "
-            f"mean_dev/valid_ratio={best_per.get('mean_dev', float('inf')):.2f})"
+            f"(expected_period={period_str}, "
+            f"near_ratio={best_per.get('near_ratio', 0.0):.3f})"
         )
         cfg["ksize"] = best_k
     else:
@@ -1920,9 +2055,22 @@ def make_raw(
     )
 
     # get motif dataframe
+    # Group by motif only: the same canonical sequence can be observed in
+    # blocks carrying different propagated labels (e.g. previously-annotated
+    # blocks vs. gap blocks labeled "skipped"). Collapse them into a single
+    # catalog entry, preferring a real label (non-null, non-"skipped") when
+    # available; otherwise keep "skipped" / null.
     motif_df = (
-        anno_df.group_by(["motif", "label"])
-        .agg(pl.col("copyNumber").sum().round(1).alias("copyNumber"))
+        anno_df.group_by("motif")
+        .agg([
+            pl.col("copyNumber").sum().round(1).alias("copyNumber"),
+            pl.coalesce([
+                pl.col("label").filter(
+                    pl.col("label").is_not_null() & (pl.col("label") != "skipped")
+                ).first(),
+                pl.col("label").drop_nulls().first(),
+            ]).alias("label"),
+        ])
         .sort("copyNumber", descending=True)
         .with_row_index("id")
         .select(["id", "motif", "copyNumber", "label"])
@@ -2065,6 +2213,7 @@ def run_anno(cfg: dict[str, Any]) -> None:
     global CFG
     CFG = cfg
     CFG["max_revisits"] = 5
+    CFG["max_motifs"] = 1000
 
     # set memory limit
     max_limit: int = min(cfg['resource'] * (1024 ** 3), sys.maxsize)
@@ -2180,6 +2329,12 @@ def run_anno(cfg: dict[str, Any]) -> None:
         ]
         motif_catalog: pl.DataFrames = pl.concat(motif_catalog_list)
         del motif_catalog_list
+        # De Bruijn graphs and k-mer counts are no longer needed once the motif
+        # catalog has been built. Dropping them here prevents a large memory
+        # spike during downstream annotation.
+        for seg in decompose_results:
+            seg.dbg = None
+            seg.kmer = None
     else:
         for decompose_task in tqdm(
             decompose_tasks, 
@@ -2208,28 +2363,41 @@ def run_anno(cfg: dict[str, Any]) -> None:
     # Recompute copy_number as the exact occurrence count across all input
     # sequences. This replaces the De Bruijn graph edge-weight estimate with the
     # true exact-match copy number to highlight the real mutation conbination.
+    #
+    # Pre-filter candidates before building the Aho-Corasick automaton: the
+    # automaton stores every cyclic rotation of every motif, so long motifs or
+    # a large catalog can consume excessive memory. The De Bruijn estimate is
+    # good enough for an initial ranking; exact counts are then used for the
+    # final ranking.
+    pre_filter_num: int = max(cfg["motifnum"] * 5, 100)
+    motif_catalog_denovo = motif_catalog_denovo.sort(
+        "copy_number", descending=True
+    ).head(pre_filter_num)
     candidate_motifs = motif_catalog_denovo["motif"].to_list()
 
     # Pad sequences with the consensus motif before counting so that motifs
-    # crossing the original sequence boundaries are not missed. 
+    # crossing the original sequence boundaries are not missed. Use a generator
+    # to avoid materializing a second copy of every input sequence in memory.
     padding_motif = CFG.get("padding_motif")
-    if padding_motif:
-        encoded_padding = encode_seq_to_array(padding_motif)
-        ksize = CFG["ksize"]
-        counting_sequences: list[str] = []
-        for seq in SEQNAME2SEQ.values():
-            encoded_seq = encode_seq_to_array(seq)
-            pad_left, pad_right = _make_adaptive_padding(
-                encoded_seq, encoded_padding, ksize
-            )
-            counting_sequences.append(
-                decode_array_to_seq(np.concatenate([pad_left, encoded_seq, pad_right]))
-            )
-    else:
-        counting_sequences = list(SEQNAME2SEQ.values())
+
+    def _padded_sequence_generator() -> Iterator[str]:
+        if padding_motif:
+            encoded_padding = encode_seq_to_array(padding_motif)
+            ksize = CFG["ksize"]
+            for seq in SEQNAME2SEQ.values():
+                encoded_seq = encode_seq_to_array(seq)
+                pad_left, pad_right = _make_adaptive_padding(
+                    encoded_seq, encoded_padding, ksize
+                )
+                yield decode_array_to_seq(
+                    np.concatenate([pad_left, encoded_seq, pad_right])
+                )
+        else:
+            for seq in SEQNAME2SEQ.values():
+                yield seq
 
     exact_counts = _count_exact_motif_occurrences(
-        counting_sequences,
+        _padded_sequence_generator(),
         candidate_motifs,
         include_rc=cfg["reverse"],
     )
@@ -2276,7 +2444,7 @@ def run_anno(cfg: dict[str, Any]) -> None:
         seg.motif_list = candidate_motifs
 
     # annoate sequence
-    dp_tasks: list[tuple(str, str, pl.DataFrame)] = []
+    dp_tasks: list[tuple[str, str, pl.DataFrame]] = []
     tmp_df_list: list[pl.DataFrame] = []
     cur_seq_name: str = None
 
@@ -2430,6 +2598,7 @@ def run_anno(cfg: dict[str, Any]) -> None:
         else:
             import vampire as vp
             adata = vp.anno.pp.read_anno(f"{cfg['prefix']}.annotation.tsv")
+            adata = vp.anno.pp.markdup(adata)
             adata.write(f"{cfg['prefix']}.h5ad")
             logger.info(f"Wrote {cfg['prefix']}.h5ad")
 
@@ -2455,6 +2624,7 @@ def run_anno(cfg: dict[str, Any]) -> None:
         if not cfg.get("skip_h5ad", False):
             import vampire as vp
             adata = vp.anno.pp.read_anno(f"{cfg['prefix']}_raw.annotation.tsv")
+            adata = vp.anno.pp.markdup(adata)
             adata.write(f"{cfg['prefix']}_raw.h5ad")
         logger.info(f"Wrote {cfg['prefix']}_raw.h5ad")
 

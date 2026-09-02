@@ -1298,6 +1298,8 @@ def waterfall(
     else:
         draw_items = [(s, s, 1, [s]) for s in sample_order]
 
+    # collect array ids that cannot be mapped through adata.var for coloring
+    unmatched_ids: set[str] = set()
     for sample, first_sample, count, samples in draw_items:
         # get data
         motif_array: list[str] = motif_array_dict[sample]
@@ -1325,7 +1327,14 @@ def waterfall(
                 end_array.append(float(pos + 1))
             motif_filtered.append(m)
             ori_filtered.append(o)
-            color_filtered.append(mapped_colormap[m])
+            # translate array id -> color element (e.g. motif sequence) via
+            # id2element; for color="id" this is the identity mapping
+            element = id2element.get(m, m)
+            color_val = mapped_colormap.get(element)
+            if color_val is None:
+                unmatched_ids.add(m)
+                color_val = "#0c0c0c"
+            color_filtered.append(color_val)
             cn_idx += 1
 
         # Old behavior: only the last block could be fractional. Kept as a
@@ -1357,6 +1366,12 @@ def waterfall(
             "data": track_data,
         }
         track_list.append(track_dict)
+
+    if unmatched_ids:
+        logger.warning(
+            "Motif ids %s not found in adata.var; colored in #0c0c0c",
+            sorted(unmatched_ids),
+        )
 
     # auto-compute figsize to avoid crowding or excessive sparsity
     n_tracks = len(track_list)

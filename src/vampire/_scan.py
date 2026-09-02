@@ -350,6 +350,7 @@ def calculate_edit_distance_between_motifs(m1: np.ndarray, m2: np.ndarray) -> in
         trace_D = trace_D,
         best_i = len(m1),
         best_j = best_j,
+        best_state = state,
         m = len(m2),
         seq = m1,
         motif = m2
@@ -1891,6 +1892,7 @@ def annotate_single_segment(
             trace_D=trace_D,
             best_i=best_i_trace,
             best_j=end_j,
+            best_state=best_state,
             m=m,
             seq=encoded_seq,
             motif=encoded_motif,
@@ -2132,6 +2134,7 @@ def annotate_multiple_segment(
                     trace_D=trace_D,
                     best_i=best_i_trace,
                     best_j=end_j,
+                    best_state=best_state,
                     m=m,
                     seq=seg,
                     motif=encoded_motif,
@@ -2204,6 +2207,7 @@ def traceback_motif_profile(
     trace_D: np.ndarray, 
     best_i: int, 
     best_j: int, 
+    best_state: int, 
     m: int, 
     seq: np.ndarray
 ) -> np.ndarray:
@@ -2215,13 +2219,14 @@ def traceback_motif_profile(
         trace_D: np.ndarray, traceback matrix for deletion
         best_i: int, best index in seq
         best_j: int, best index in motif
+        best_state: int, best state (0: M, 1: I, 2: D)
         m: int, length of motif
         seq: np.ndarray, sequence
     Outputs:
         np.ndarray, the motif profile
     """
     i, j = best_i, best_j
-    state = 0
+    state = best_state
 
     motif_profile = np.zeros((m, 5), dtype=np.int32)
 
@@ -2243,7 +2248,6 @@ def traceback_motif_profile(
             prev_state = trace_D[i, j]
             j = j - 1 if j > 0 else m - 1
             state = prev_state
-            ### motif_profile[j, 4] += 1
 
     return motif_profile
 
@@ -2876,8 +2880,12 @@ def banded_dp_align_backward(
     return score_array, band_argmax_j
 
 def traceback_banded_roll_motif(
-    trace_M: np.ndarray, trace_I: np.ndarray, trace_D: np.ndarray,
-    best_i: int, best_j: int,
+    trace_M: np.ndarray,
+    trace_I: np.ndarray,
+    trace_D: np.ndarray,
+    best_i: int,
+    best_j: int,
+    best_state: int,
     m: int,
     seq: np.ndarray,
     motif: np.ndarray,
@@ -2890,6 +2898,7 @@ def traceback_banded_roll_motif(
         trace_D: np.ndarray, traceback matrix for deletion
         best_i: int, best index in seq
         best_j: int, best index in motif
+        best_state: int, best state (0: M, 1: I, 2: D)
         m: int, length of motif
         seq: np.ndarray, target sequence
         motif: np.ndarray, query motif
@@ -2902,7 +2911,7 @@ def traceback_banded_roll_motif(
         state: 0=M (diagonal), 1=I (gap in motif), 2=D (gap in seq)
     """
     i, j = best_i, best_j
-    state = 0
+    state = best_state
 
     ops: list[str] = []
 

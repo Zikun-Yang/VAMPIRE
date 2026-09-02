@@ -1083,14 +1083,28 @@ def _build_haplotype_consensus(
 ) -> dict[str, list[str]]:
     """Build a consensus sequence for each haplotype cluster.
 
-    At each alignment position the most frequent non-gap motif among cluster
-    members is chosen. If all members have a gap at that position, ``"-"``
-    is used.
+    At each alignment position the most frequent motif among cluster
+    members is chosen. Gaps ``"-"`` participate in the vote; ties are
+    resolved in favour of the motif seen first.
     """
     from collections import Counter
 
     consensus: dict[str, list[str]] = {}
     unique_labels = sorted(set(labels))
+
+    # Defensive check: the alignment must be rectangular (all rows equal
+    # length). Ragged rows here would surface as a cryptic IndexError below.
+    row_lengths = {name: len(aligned_motifs[name]) for name in names}
+    if len(set(row_lengths.values())) > 1:
+        shortest = sorted(row_lengths, key=row_lengths.get)[:5]
+        raise ValueError(
+            "Aligned motif array is not rectangular: row lengths are "
+            f"{sorted(set(row_lengths.values()))}. "
+            f"Shortest rows: {shortest}. "
+            "This usually indicates ragged MSA output from sample_msa() "
+            "(e.g. samples with extra VNTR copies vs the consensus). "
+            "Re-run vp.anno.tl.sample_msa() and check its warnings."
+        )
 
     for h in unique_labels:
         samples_in_h = [

@@ -17,7 +17,22 @@ tocdepth: 0
 
 ## Versions
 
-### **[Latest] — v0.4.2 (2026-06-22)**
+### **[Latest] — v0.4.3 (2026-07-14)**
+
+#### New Features
+- Added automatic k-size selection for `anno`. The tool runs a quick internal `scan`, estimates the motif period range, and picks the k-size whose distance-derived periodicity best matches the expected period.
+- Added adaptive boundary padding in `anno` so that boundary k-mers appear in multiple copies and can form SCCs in the De Bruijn graph.
+- Added exact motif occurrence counting with an Aho-Corasick automaton; `anno` now reports true copy numbers across all input sequences rather than De Bruijn graph edge-weight estimates.
+- Added `--use-raw` output mode for `anno` to export observed aligned sequences as raw motifs without polishing or compression.
+
+#### Improvements
+- Set `POLARS_MAX_THREADS=1` in `vampire/__init__.py` before importing any submodule to avoid fork-related deadlocks when `anno` uses `multiprocessing.Pool`.
+- Updated CLI help examples for `vampire anno` and `vampire generator`.
+
+#### Bug Fixes
+- Fixed a bug in `src/vampire/_anno.py`.
+
+### v0.4.2 (2026-06-22)
 
 #### Bug Fixes
 - Fixed a bug in `src/vampire/_anno.py`.

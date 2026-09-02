@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 from datetime import datetime
 from importlib.metadata import version
-from typing import Dict
 import polars as pl
 
 # plotting
@@ -71,7 +70,7 @@ def make_stats(params: dict) -> dict:
             file_ksize_tuple = sorted(zip(file_list, ksize_list), key=lambda x: x[1])
             if not file_ksize_tuple:
                 raise FileNotFoundError(f"No smoothness files found in {stats_path}")
-            smoothness: Dict[int, pl.DataFrame] = {}
+            smoothness: dict[int, pl.DataFrame] = {}
             for file, ksize in file_ksize_tuple:
                 smoothness[ksize] = read_smoothness_file(file)
             logger.debug(f"Read and processed smoothness score")
@@ -106,8 +105,8 @@ def make_stats(params: dict) -> dict:
             import anndata as ad
             vp.anno.pl.set_default_plotstyle()
             adata = ad.read_h5ad(f"{params['prefix']}.h5ad")
-            sample_order: List[str] = list(adata.obs.sort_values(by="copy_number").index)
-            copy_number_list: List[float] = adata.obs["copy_number"]
+            sample_order: list[str] = list(adata.obs.sort_values(by="copy_number").index)
+            copy_number_list: list[float] = adata.obs["copy_number"]
             anno_extra = {
                 "AUTO_MODE": not params["no_auto"],
                 "NO_DENOVO_MODE": params["no_denovo"],
